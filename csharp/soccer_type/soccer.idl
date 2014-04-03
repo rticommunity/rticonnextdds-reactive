@@ -1,0 +1,112 @@
+struct AggregateRunningData {
+	
+	long long ts;
+	string player_id; //@key
+	
+	double standing_time;
+	double standing_distance;
+	
+	double trot_time;
+	double trot_distance;
+	
+	double low_time;
+	double low_distance;
+	
+	double medium_time;
+	double medium_distance;
+	
+	double high_time;
+	double high_distance;
+	
+	double sprint_time;
+	double sprint_distance;
+};
+
+enum Intensity{
+	STOP,
+	TROT,
+	LOW,
+	MEDIUM,
+	HIGH,
+	SPRINT
+};
+
+struct CurrentRunningData {
+	
+	long long ts_start;
+	long long ts_stop;
+	string player_id; //@key
+	Intensity intensity;
+	double distance;
+	double speed;
+	
+};
+struct PlayerBallPossession {
+
+	long long ts;
+	string player_id; //@key
+	double time;
+	long hits;
+};
+
+struct PlayerData {
+	string player_name; //@key
+	long long ts;
+	double pos_x;
+	double pos_y;
+	double pos_z;
+	double vel;
+	double accel;
+	double vel_x;
+	double vel_y;
+	double vel_z;	
+	double accel_x;
+	double accel_y;
+	double accel_z;
+	
+};
+
+struct SensorData {
+	long sensor_id; //@key
+	long long ts;
+	long pos_x;
+	long pos_y;
+	long pos_z;
+	long vel;
+	long accel;
+	long vel_x;
+	long vel_y;
+	long vel_z;	
+	long accel_x;
+	long accel_y;
+	long accel_z;
+	
+};
+
+struct ShotOnGoalData {
+	
+	long long ts;
+	string player_id;
+
+	long pos_x;
+	long pos_y;
+	long pos_z;
+	
+	long vel;	
+	long vel_x;
+	long vel_y;
+	long vel_z;	
+	
+	long accel;
+	long accel_x;
+	long accel_y;
+	long accel_z;
+	
+};
+struct TeamBallPossession {
+
+	long long ts;
+	string team_id;
+	double time;
+	double time_percent;
+};
