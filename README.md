@@ -1,7 +1,11 @@
 Rx4DDS
 ==========
 
-.NET Reactive Extensions Adapter for RTI Connext DDS
+.NET Reactive Extensions Adapter for RTI Connext DDS.
+
+- [Rx4DDS.NET Announcement](http://blogs.rti.com/2014/04/09/reactive-programming-using-rx4dds/)
+- Research paper on [Scalable Reactive Stream Processing Using DDS and Rx](http://community.rti.com/paper/scalable-reactive-stream-processing-using-dds-and-rx) 
+
 
 ### Windows Build
 Both, Visual Studio C++ and C# compilers are required. Supported versions = VS2012 and VS2013 
