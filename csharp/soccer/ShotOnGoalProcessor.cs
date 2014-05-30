@@ -15,21 +15,33 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Reactive.Subjects;
 using System.Reactive.Linq;
+using System.Diagnostics;
+using System.IO;
+using Utility;
+using Query2;
 
-namespace Queries
+namespace Query4
 {
-    class ShotOnGoalProcessor
+    public static class ShotOnGoalProcessor
     {
-        public static void shotProcessor(ref Subject<SensorData> src,
-            ref Subject<BallPossessionQuery.EventInfo> eventInfoStream,
-            ref Subject<ShotOnGoalData> output)
-        {
 
-            eventInfoStream
+        //ShotonGoal Query as IObservable<SensorData> extension 
+        public static IObservable<ShotOnGoalData> shotOnGoalProcessor(this IObservable<SensorData> src,
+            ref Subject<BallPossessionQuery.EventInfo> eventInfoStream)
+        {
+            return computeShotOnGoal(src, ref eventInfoStream);
+        }
+
+
+        public static IObservable<ShotOnGoalData> computeShotOnGoal(IObservable<SensorData> src,
+            ref Subject<BallPossessionQuery.EventInfo> eventInfoStream)            
+        {
+            return eventInfoStream
                 .Select(data =>
                     {
                         if (data.state.Equals("hit"))
                         {
+                            //Console.WriteLine(data.player_id);
                             //calculate the component velocities along x, y and z axis. 
                             double x_vel = (data.ballData.vel * data.ballData.vel_x)
                                 / MetaData.VEL_COMPONENT_FACTOR;
@@ -54,7 +66,7 @@ namespace Queries
                                     ball_id = data.ball_sensor_id,
                                     ball_ts = data.ballData.ts
                                 };
-                            else   
+                            else
                                 //if projected ball position does not lie in goal post areas then shot_on_goal=false
                                 return new
                                 {
@@ -110,9 +122,8 @@ namespace Queries
                                 accel_y = d.ballData.accel_y,
                                 accel_z = d.ballData.accel_z
                             };
-                        })
-                    .Subscribe(output);       
-                
+                        });
+      
         }        
         
         //this function checks whether the projected ball position will fall within defined goal-post areas. 

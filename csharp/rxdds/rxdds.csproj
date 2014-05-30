@@ -31,10 +31,11 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="nddsdotnet45">
-      <HintPath>..\..\..\..\Apps\RTI510\ndds.5.1.0\lib\i86Win32dotnet4.5\nddsdotnet45.dll</HintPath>
+    <Reference Include="nddsdotnet40">
+      <HintPath>C:\Program Files (x86)\RTI\ndds.5.0.0\lib\i86Win32dotnet4.0\nddsdotnet40.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />

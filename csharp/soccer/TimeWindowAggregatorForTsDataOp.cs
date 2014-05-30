@@ -62,5 +62,7 @@ namespace SoccerExtesions
     {
       return new TimeWindowAggregatorForTsDataOp<T, TAccumulate>(source, timespan, fieldName, seed, accumulator);
     }
+
+    
   }
 }

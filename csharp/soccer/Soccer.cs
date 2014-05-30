@@ -17,17 +17,26 @@ using System.Reactive.Subjects;
 using System.Reactive.Linq;
 using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
+using System.Reactive;
+using System.Diagnostics;
+using System.Threading;
+using System.IO;
 
-namespace QueryExtensions
-{
 
-}
+using Utility;
+using Average;
+using Query1;
+using Query2;
+using Query3;
+using Query4;
+
 
 namespace Queries
 {
+    
     class Soccer
     {
-        //Private DataMemebers of class
+        //data-writers for different typed outputs. 
         private DDS.TypedDataWriter<SensorData> mSensorDataWriter;
         private DDS.TypedDataWriter<PlayerData> mPlayerDataWriter;
         private DDS.TypedDataWriter<CurrentRunningData> mCurrentRunningDataWriter;
@@ -35,18 +44,18 @@ namespace Queries
         private DDS.TypedDataWriter<PlayerBallPossession> mPlayerBallPossessionDataWriter;
         private DDS.TypedDataWriter<TeamBallPossession> mTeamBallPossessionDataWriter;
         private DDS.TypedDataWriter<ShotOnGoalData> mshotOnGoalDataWriter;
-
+       
         private DDS.InstanceHandle_t mInstanceHandle = DDS.InstanceHandle_t.HANDLE_NIL;
-
+                
         /**
          * Entry point of program
          */
         public static void Main(string[] args)
-        {
-            Console.WriteLine("Running SensorToPlayer Average Processor. Press Enter to exit...");
-
+        {   
+            Console.WriteLine("Running QueryProcessor. Press Enter to exit...");            
+           
             //DDS domain participant
-            DDS.DomainParticipant participant = null;
+            DDS.DomainParticipant participant = null;            
 
             try
             {
@@ -62,84 +71,75 @@ namespace Queries
                 //create Player mapping to team_ids
                 MetaData.createTeamMap();
 
-                participant = DefaultParticipant.Instance;
+                //get an instance of default domain participant
+                participant =DefaultParticipant.Instance;                
 
-                //Register SensorData type with the domain participant
-                SensorDataTypeSupport.register_type(participant, typeof(SensorData).ToString());
-                PlayerDataTypeSupport.register_type(participant, typeof(PlayerData).ToString());
-                CurrentRunningDataTypeSupport.register_type(participant, typeof(CurrentRunningData).ToString());
-                AggregateRunningDataTypeSupport.register_type(participant, typeof(AggregateRunningData).ToString());
-                PlayerBallPossessionTypeSupport.register_type(participant, typeof(PlayerBallPossession).ToString());
-                TeamBallPossessionTypeSupport.register_type(participant, typeof(TeamBallPossession).ToString());
-                ShotOnGoalDataTypeSupport.register_type(participant, typeof(ShotOnGoalData).ToString());
+                //Register types that will be used in application 
+                registerTypes();
 
-
-                Soccer prog = new Soccer();
                 
-               prog.mSensorDataWriter = 
-                  DefaultParticipant.CreateDataWriter<SensorData>("QueryOutput", typeof(SensorData).ToString());
-                prog.mPlayerDataWriter =
-                  DefaultParticipant.CreateDataWriter<PlayerData>("PlayerOutput", typeof(PlayerData).ToString());
-                prog.mCurrentRunningDataWriter =
-                  DefaultParticipant.CreateDataWriter<CurrentRunningData>("CurrentRunningDataTopic", typeof(CurrentRunningData).ToString());
-                prog.mAggregateRunningDataWriter =
-                  DefaultParticipant.CreateDataWriter<AggregateRunningData>("AggregateRunningDataTopic", typeof(AggregateRunningData).ToString());
-                prog.mPlayerBallPossessionDataWriter =
-                  DefaultParticipant.CreateDataWriter<PlayerBallPossession>("PlayerBallPossessionTopic", typeof(PlayerBallPossession).ToString());
-                prog.mTeamBallPossessionDataWriter = 
-                  DefaultParticipant.CreateDataWriter<TeamBallPossession>("TeamBallPossessionTopic", typeof(TeamBallPossession).ToString());
-                prog.mshotOnGoalDataWriter = 
-                  DefaultParticipant.CreateDataWriter<ShotOnGoalData>("ShotOnGoalDataTopic", typeof(ShotOnGoalData).ToString());
+                Soccer prog = new Soccer();   
+                //initialize dataWriters  
+                prog.initializeDataWriters();
+               
+                IDisposable disposable = null;               
+                Console.WriteLine("******************Initialization is Complete**************");
 
-                IDisposable disposable = null;
-                Console.WriteLine("**********************************************************************");
-                Console.WriteLine("**********************************************************************");
-                Console.WriteLine("******************************Initialization is Complete**************");
-
-
-                var sensorDataStream = new Subject<SensorData>();
-                var averagePlayerDataStream = new Subject<PlayerData>();
-                var currentRunningDataStream = new Subject<CurrentRunningData>();
-                var aggregateRunningDataStream = new Subject<AggregateRunningData>();
-                var playerBallPossessionDataStream = new Subject<PlayerBallPossession>();
-                var teamBallPossessionDataStream = new Subject<TeamBallPossession>();
+                //eventInfoStream subject is used to convey intermediate output from query-2 to query-4             
                 var eventInfoStream = new Subject<BallPossessionQuery.EventInfo>();
-                var shotOnGoalStream = new Subject<ShotOnGoalData>();
+                //heatMapSub subject is used to integrate HeatMap data for 17*4=68 streams. (17 players * 4 grid types)
+                var heatMapSub = new Subject<HeatMapProcessor.HeatMapData>();
+                
+                //create rawSensorStream from data received on DDS topic "Raw SensorData"
+                IObservable<SensorData> rawSensorStream =DDSObservable
+                    .FromTopic<SensorData>(participant, "Raw SensorData");            
+                
+                //used to keep track of number of output samples produced from a query. 
+                int output_count = 0;
 
-                IObservable<SensorData> rawSensorStream =
-                DDSObservable.FromTopic<SensorData>(participant, "Raw SensorData");
+                //initialize PerformanceTest.ptArray that stores a PerformanceTest obj for each player stream 
+                PerformanceTest.initializePtArr();
+                //set AvgProcessorStatus equal to true to compute performance metrics for AverageProcessor. 
+                PerformanceTest.AvgProcessorStatus = true;
+                
 
-                rawSensorStream.Subscribe(sensorDataStream);
+                //start throughput timer before query 
+                PerformanceTest.startThroughputSW();               
+               
+                //AverageProcessor               
+                disposable= rawSensorStream
+                     .ObserveOn(Scheduler.Default)
+                     .averageProcessor()
+                     .Merge()
+                     //if PerformanceTest.AvgProcessorStatus is true, then perform Do side-effect. 
+                     .DoIf(() => PerformanceTest.AvgProcessorStatus,
+                         d => output_count++,
+                         () =>
+                         {
+                             PerformanceTest.postProcess("averageProcessor_stats.txt");
+                             Console.WriteLine("check on output count: " + output_count);
+                         })
+                     .Subscribe(prog.mPlayerDataWriter);       
+                
+                //Query-1 CurrentRunningProcessor
+                //disposable= rawSensorStream.averageProcessor().currentRunningProcessor().Merge().Subscribe(prog.mCurrentRunningDataWriter);
+                
+                //Query-1 AggregateRunningProcessor
+                //disposable= rawSensorStream.averageProcessor().currentRunningProcessor().aggregateRunningDataProcessorFullGame().Merge().Subscribe(prog.mAggregateRunningDataWriter);
 
-                AverageProcessor.sensorToPlayerAverageProcessor(ref sensorDataStream, ref averagePlayerDataStream);
-                averagePlayerDataStream.Subscribe(prog.mPlayerDataWriter);              
-              
-               CurrentRunningAnalysisQuery
-                    .currentRunningDataProcessor(ref averagePlayerDataStream,ref currentRunningDataStream);
-                currentRunningDataStream.Subscribe(prog.mCurrentRunningDataWriter);     
-
-               AggregateRunningAnalysis
-                    .aggregateRunningDataProcessorTimeSpan(ref currentRunningDataStream,
-                    ref aggregateRunningDataStream,300);               
-               aggregateRunningDataStream.Subscribe(prog.mAggregateRunningDataWriter);
-
-               BallPossessionQuery.ballPossessionProcessor(ref sensorDataStream,
-                   ref playerBallPossessionDataStream,
-                   ref eventInfoStream
-                   );
-               playerBallPossessionDataStream.Subscribe(prog.mPlayerBallPossessionDataWriter);
-
-               TeamBallPossessionQuery.teamBallPossessionTimeWindow(300,ref playerBallPossessionDataStream,
-                   ref teamBallPossessionDataStream);
-               teamBallPossessionDataStream.Subscribe(prog.mTeamBallPossessionDataWriter);
-
-               HeatMapProcessor.heatMap(ref averagePlayerDataStream);
-
-               ShotOnGoalProcessor.shotProcessor(ref sensorDataStream, ref eventInfoStream, ref shotOnGoalStream);
-               shotOnGoalStream.Subscribe(prog.mshotOnGoalDataWriter);
+                //Query2
+                //disposable= rawSensorStream.ballPossessionProcessor(ref eventInfoStream).Subscribe(prog.mPlayerBallPossessionDataWriter);
+                
+                /*//Query3
+                rawSensorStream.averageProcessor().heatMapProcessor(heatMapSub);
+                disposable= heatMapSub.Subscribe();*/                 
                  
+                //Query4
+                //disposable= rawSensorStream.shotOnGoalProcessor(ref eventInfoStream).Subscribe(prog.mshotOnGoalDataWriter);
+               
+                Console.ReadLine();           
+               
 
-                Console.ReadLine();
                 while (disposable != null)
                 {
                     ConsoleKeyInfo info = Console.ReadKey(true);
@@ -158,7 +158,39 @@ namespace Queries
             Console.WriteLine("Quitting...");
             DefaultParticipant.Shutdown();
 
-        }//End of function: main        
+        }
+
+        //function to register data-types used in the application 
+        public static void registerTypes()
+        {
+            DefaultParticipant.RegisterType<SensorData, SensorDataTypeSupport>();
+            DefaultParticipant.RegisterType<PlayerData, PlayerDataTypeSupport>();
+            DefaultParticipant.RegisterType<CurrentRunningData, CurrentRunningDataTypeSupport>();
+            DefaultParticipant.RegisterType<AggregateRunningData, AggregateRunningDataTypeSupport>();
+            DefaultParticipant.RegisterType<PlayerBallPossession, PlayerBallPossessionTypeSupport>();
+            DefaultParticipant.RegisterType<TeamBallPossession, TeamBallPossessionTypeSupport>();
+            DefaultParticipant.RegisterType<ShotOnGoalData, ShotOnGoalDataTypeSupport>();
+
+        }
+        //initializes typed datawriters for this object. 
+        public void initializeDataWriters()
+        {
+            mSensorDataWriter =
+                  DefaultParticipant.CreateDataWriter<SensorData>("QueryOutput", typeof(SensorData).ToString());
+            mPlayerDataWriter =
+              DefaultParticipant.CreateDataWriter<PlayerData>("PlayerOutput", typeof(PlayerData).ToString());
+            mCurrentRunningDataWriter =
+              DefaultParticipant.CreateDataWriter<CurrentRunningData>("CurrentRunningDataTopic", typeof(CurrentRunningData).ToString());
+            mAggregateRunningDataWriter =
+              DefaultParticipant.CreateDataWriter<AggregateRunningData>("AggregateRunningDataTopic", typeof(AggregateRunningData).ToString());
+            mPlayerBallPossessionDataWriter =
+              DefaultParticipant.CreateDataWriter<PlayerBallPossession>("PlayerBallPossessionTopic", typeof(PlayerBallPossession).ToString());
+            mTeamBallPossessionDataWriter =
+              DefaultParticipant.CreateDataWriter<TeamBallPossession>("TeamBallPossessionTopic", typeof(TeamBallPossession).ToString());
+            mshotOnGoalDataWriter =
+              DefaultParticipant.CreateDataWriter<ShotOnGoalData>("ShotOnGoalDataTopic", typeof(ShotOnGoalData).ToString());
+
+        }
 
         
     }

@@ -17,47 +17,54 @@ using System.Reactive.Subjects;
 using System.Reactive.Linq;
 using System.Reactive.Concurrency;
 using SoccerExtesions;
+using System.Diagnostics;
+using System.IO;
+using Utility;
+using RTI.RxDDS;
 
-namespace Queries
+
+namespace Query1
 {
-    class AggregateRunningAnalysis
-    {        
-        /**
-         * This function calculates the aggregateRunningData for each player over the course 
-         * of the entire game. RollingAggregator has been used to calculate the aggregate running 
-         * statistics. Query requires us to count the intensity values(time and dist) that were active for less 
-         * than a second to be counted for the next intensity value that appears for more than a 
-         * second. 
-         */
-        public static void aggregateRunningDataProcessorFullGame(ref Subject<CurrentRunningData> src,
-            ref Subject<AggregateRunningData> output)
+    
+    public static class AggregateRunningAnalysis
+    {
+        //aggregateRunningFullGame Query as IEnumerable<IObservable<CurrentRunningData>> extension method
+        public static IList<IObservable<AggregateRunningData>> aggregateRunningDataProcessorFullGame(this IList<IObservable<CurrentRunningData>> src)
         {
+            return computeAggregateRunningDataFull(src);
+        }
+        
+        ////aggregateRunningTimeSpan Query as IEnumerable<IObservable<CurrentRunningData>> extension method
+        public static IList<IObservable<AggregateRunningData>> aggregateRunningDataProcessorTimeSpan(this IList<IObservable<CurrentRunningData>> src,int timeSpanInSec)
+        {
+            return computeAggregateRunningDataTS(src, timeSpanInSec);
+        }
+        
+        public static IList<IObservable<AggregateRunningData>> computeAggregateRunningDataFull(IList<IObservable<CurrentRunningData>> src)
+        {
+            IList<IObservable<AggregateRunningData>> aggList=new List<IObservable<AggregateRunningData>>();
             
-            src
-                //for each player
-                .GroupBy(data => data.player_id)
-                .ObserveOn(Scheduler.Default)
-                .SelectMany(playerStream =>
-                {
-                    //stores the distance travelled by this player in an
-                    //intensity zone that is active for less than a sec.
-                    //var lessThanSecDist = 0.0;
-
-                    //stores the time for which an intensity was active, when 
-                    //it was active for less than a second. 
-                    //var lessThanSecTime = 0.0;
-
-                    return playerStream
-                        //for each player do a rolling aggregate on values. 
-                        .Scan(
-                        //seed 
-                        new Composite
+            //tracks PerformanceTest instance for a player stream in src. 
+            int pt_index = 0;
+            
+            foreach(var playerStream in src)
+            {
+                //obtain PerformanceTest instance for this player stream from PerformanceTest.ptArray.
+                var pt = PerformanceTest.ptArray[pt_index]; pt_index++;
+                
+                aggList.Add(
+                    playerStream
+                    .ObserveOn(Scheduler.Default)
+                    //if AggRunningStatus==true, then compute performance metrics for AggregateRunning Processor
+                    .DoIf(()=>PerformanceTest.AggRunningStatus,d=>pt.recordTime())
+                    //for each player do a rolling aggregate on values. 
+                    .Scan(new Composite
                         {
                             toPublish = true,
                             data = new AggregateRunningData()
                             {
                                 ts = 0,
-                                player_id = playerStream.Key,
+                                player_id = "",
                                 standing_distance = 0,
                                 standing_time = 0,
                                 trot_distance = 0,
@@ -78,26 +85,33 @@ namespace Queries
                             List<CurrentRunningData> expList=new List<CurrentRunningData>();
                             return aggregatorFunction
                                 (seed, curValue, expList,0);
-                        });
-
-                })//end of selectMany
-                //only publish if 'toPublish' field is true 
-                .Where(data => data.toPublish == true)
-                .Select(val => val.data)
-                .Subscribe(output);
-
+                        })               
+                        //only publish if 'toPublish' field is true 
+                        .Where(data => data.toPublish == true)
+                        .Select(val => val.data)
+                        //computes time taken to process input CurrentRunning sample into a AggregateRunning output sample
+                        .DoIf(()=>PerformanceTest.AggRunningStatus,d=>pt.computeMetrics()));
+                
+            }
+            return aggList;
         }
-        /**
-         * This function will calculate aggregateRunningData for each player for a given timeSpan in seconds.
-         * The expired CurrentRunningData values are determied on the basis of timeStamp values that each
-         * CurrentRunningData element has. The System clock has not been used for determining expired 
-         * values
-         */
-        public static void aggregateRunningDataProcessorTimeSpan(ref Subject<CurrentRunningData> src,
-            ref Subject<AggregateRunningData> output,int timeSpanInSec)
+        
+        
+        
+        public static IList<IObservable<AggregateRunningData>> computeAggregateRunningDataTS(IList<IObservable<CurrentRunningData>> src, int timeSpanInSec)
         {
-            Int64 givenInterval=timeSpanInSec*MetaData.SECOND_TO_PICO;
-            Composite seed = new Composite
+            var givenInterval = timeSpanInSec * MetaData.SECOND_TO_PICO;
+            IList<IObservable<AggregateRunningData>> aggList = new List<IObservable<AggregateRunningData>>();
+            
+            //tracks PerformanceTest instance for a player stream in src. 
+            int pt_index = 0;
+
+            foreach (var playerStream in src)
+            {
+                //obtain PerformanceTest instance for this player stream from PerformanceTest.ptArray.
+                var pt = PerformanceTest.ptArray[pt_index]; pt_index++;
+               
+                Composite seed = new Composite
                         {
                             toPublish = true,
                             lessThanSecDist=0,
@@ -120,19 +134,17 @@ namespace Queries
                                 sprint_time = 0
                             }
                         };
-            src
-                //for each player
-                .GroupBy(data => data.player_id)
-                //.Subscribe(stream => { Console.WriteLine(stream.Key); });
-                .SelectMany(playerStream =>
-                    {
-                        return ((IObservable<CurrentRunningData>)playerStream)
-                            .TimeWindowForTsDataAggregate(givenInterval, "ts_start", seed,aggregatorFunction);
-                    })               
-                    //select AggregateRunningData for which toPublish is true
+                aggList.Add(playerStream
+                    //if AggRunningStatus==true, then compute performance metrics for AggregateRunning Processor
+                    .DoIf(()=>PerformanceTest.AggRunningStatus,d => pt.recordTime())
+                    .TimeWindowForTsDataAggregate(givenInterval, "ts_start", seed, aggregatorFunction)                    
                     .Where(d => d.toPublish == true)
                     .Select(d => d.data)
-                    .Subscribe(output);
+                    //computes time taken to process input CurrentRunning sample into a AggregateRunning output sample
+                    .DoIf(()=>PerformanceTest.AggRunningStatus,d=> pt.computeMetrics()));
+            }
+            return aggList;
+
         }
 
         //This function adds CurrentRunningData element's time/distance
@@ -355,73 +367,9 @@ namespace Queries
             public double lessThanSecDist;            
             public AggregateRunningData data;
         };
-    
-    
-    }
+  }
+
 }
 
 
-/*                 
- * 
- * .SelectMany(playerStream =>
-                   {
-                       //maintain variables to store distances and time periods 
-                       //of intensities observed for less than a second.
-                       double lessThanSecDist = 0;
-                       double lessThanSecTime = 0;
-                        
-                       //create a seed value 
-                       Composite seed = new Composite
-                       {
-                           toPublish = true,
-                           lessThanSecDist=0,
-                           lessThanSecTime=0,
-                           data = new AggregateRunningData
-                           {
-                               ts = 0,
-                               player_id = playerStream.Key,
-                               standing_distance = 0,
-                               standing_time = 0,
-                               trot_distance = 0,
-                               trot_time = 0,
-                               low_distance = 0,
-                               low_time = 0,
-                               medium_distance = 0,
-                               medium_time = 0,
-                               high_distance = 0,
-                               high_time = 0,
-                               sprint_distance = 0,
-                               sprint_time = 0
-                           }
-                       };
 
-                       //this list will store CurrentRunningData values for this player
-                       List<CurrentRunningData> list_of_values = new List<CurrentRunningData>();
-
-                       //for each RunningData for this player
-                       return playerStream.Select(runningData =>
-                       {
-                               int expCount = 0;
-                               List<CurrentRunningData> expList = new List<CurrentRunningData>();
-                               //find out the CurrentRunningData values that have expired
-                               //based on timestamps in within CurrentRunningData values
-                               foreach (var val in list_of_values)
-                               {
-                                   if ((runningData.ts_start - val.ts_start) >= givenInterval)
-                                   {
-                                       expCount++;
-                                       expList.Add(val);
-                                   }
-                                   else
-                                       break;
-                               }
-                               //remove expired values.
-                               list_of_values.RemoveRange(0, expCount);
-                               list_of_values.Add(runningData);
-                               //update seed value with aggregatorFunction
-                               seed = aggregatorFunction
-                                   (seed, runningData, expList, ref lessThanSecDist, ref lessThanSecTime);
-                               return seed;
-                       });
-                    
-                   })//End of selectMany*/

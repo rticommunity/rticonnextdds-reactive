@@ -16,18 +16,30 @@ using System.Threading.Tasks;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using RTI.RxDDS;
+using System.Diagnostics;
+using System.IO;
+using Utility;
 
-namespace Queries
+
+
+
+namespace Query2
 {
-    class BallPossessionQuery
+    public static class BallPossessionQuery
     {
-       
-        public static void ballPossessionProcessor(ref Subject<SensorData> src,
-            ref Subject<PlayerBallPossession>output, ref Subject<EventInfo> eventInfoStream)            
-        {
 
-            Console.WriteLine("inside ballPossessionProcessor");
-                      
+        //query-2 as an extension method of IObservable<SensorData>
+        public static IObservable<PlayerBallPossession> ballPossessionProcessor(this IObservable<SensorData> src,
+            ref Subject<EventInfo> eventInfoStream)
+        {
+            return computeBallPossession(src,ref eventInfoStream);
+        }
+
+
+        public static IObservable<PlayerBallPossession> computeBallPossession(IObservable<SensorData> src,
+             ref Subject<EventInfo> eventInfoStream)            
+        {        
+            
             //for keeping track of active ball sensor_id
             int ballSensorId = -1;
             //for keeping track of player who is in possession of ball currently
@@ -37,15 +49,12 @@ namespace Queries
             //for keeping track of last ts of ball hit for each player
             Dictionary<string, Int64> playerTsMap = initializeTsDictionary();
             //for keeping track of possession time of ball for each player 
-            Dictionary<string, double> playerPossessionTimeMap = initializePossessionTimeDictionary();           
+            Dictionary<string, double> playerPossessionTimeMap = initializePossessionTimeDictionary(); 
             
-
-            //for publishing possession state changes. 
-            //Subject<EventInfo> stateInfoSub = new Subject<EventInfo>();
             
             //This list will hold references to sensor streams for all the sensors that 
             //are attached to a player
-            List<IObservable<SensorData>> playerStreamList = getPlayerStreamList(ref src);
+            List<IObservable<SensorData>> playerStreamList = getPlayerStreamList(src);
 
                       
 
@@ -63,6 +72,8 @@ namespace Queries
                 };
             });
 
+            
+            
             Observable
                 //obtain latest data sample for all player sensors 
                 .CombineLatest(playerStreamList)
@@ -80,7 +91,8 @@ namespace Queries
 
                         min_dist_Player=a
                             .Where(val=>val.ts !=-99999)
-                            .Aggregate((x, y) =>
+                            .DefaultIfEmpty<SensorData>(MetaData.getDefaultSensorData())
+                            .Aggregate((x,y)=>
                             {
                                 double dist1 = MetaData
                                .returnDistance(b.ballData.pos_x, b.ballData.pos_y, x.pos_x, x.pos_y);
@@ -97,6 +109,9 @@ namespace Queries
                                     return y;
                                 }
                             });
+                        
+                        
+                        
                         if (min_dist_Player.ts == -99999)
                         {
                             //no valid player sensor data was observed yet
@@ -163,11 +178,12 @@ namespace Queries
                         //possession state changes only occur on a hit or if game ends/ball out of field
                         return !(data.state.Equals("empty") || data.state.Equals("invalid"));
                     }).Subscribe(eventInfoStream);
-                                   
 
-            
-            eventInfoStream.SelectMany(data =>
+
+
+            return eventInfoStream.SelectMany(data =>
                   {
+
                       if (data.state.Equals("outOfFieldOrEnded"))
                       {
                           //the player who possesses the ball hits it out of the field and 
@@ -183,6 +199,7 @@ namespace Queries
                               playerWithBallPossession = "";
                               //the ball is no longer active in field
                               ballSensorId = -1;
+
 
                               //publish state change 
                               return new List<Update>
@@ -202,21 +219,28 @@ namespace Queries
                       }
                       else//data.state=="hit"
                       {
+                          Console.WriteLine("hit");
+                          //Console.WriteLine("PlayerBallPossession--- " + data.player_id);
                           //If the same player who had the ball before hits active ball again.
-                          if (data.player_id.Equals(playerWithBallPossession) && ballSensorId == data.ball_sensor_id)
+                          if (data.player_id.Equals(playerWithBallPossession)) //&& ballSensorId == data.ball_sensor_id)
                           {
+                              //Console.WriteLine("Re-Hit by:" + data.player_id);
                               //increment hit count 
                               playerHitsMap[data.player_id] += 1;
                               //update possession time
                               playerPossessionTimeMap[data.player_id] += data.ts - playerTsMap[data.player_id];
                               //update last hit timeStamp 
                               playerTsMap[data.player_id] = data.ts;
+                              //update ballSensorId 
+                              ballSensorId = data.ball_sensor_id;
+
 
                           }
                           //if this player hits the ball and acquires its possession, 
                           //when previously no other player possessed the ball
                           else if (playerWithBallPossession.Equals(""))
                           {
+                              //Console.WriteLine("Hit by:" + data.player_id);
                               //update Player who has ball
                               playerWithBallPossession = data.player_id;
                               //increment hit count for this player
@@ -225,6 +249,7 @@ namespace Queries
                               playerTsMap[data.player_id] = data.ts;
                               //keep track of active ball in field
                               ballSensorId = data.ball_sensor_id;
+
 
                               //publish state change
                               return new List<Update>{
@@ -240,9 +265,10 @@ namespace Queries
                                     }
                                 };
                           }//pervious player was intercepted by a new player for the active ball
-                          else if (!playerWithBallPossession.Equals(data.player_id)
-                              && ballSensorId == data.ball_sensor_id)
+                          else if (!playerWithBallPossession.Equals(data.player_id))
+                          //&& ballSensorId == data.ball_sensor_id)
                           {
+                              //Console.WriteLine("Intercepted by: " + data.player_id);
                               List<Update> updates = new List<Update>();
                               //update previous player's possession time 
                               //pervious player has lost possession and this state change must be published
@@ -266,6 +292,8 @@ namespace Queries
                               playerHitsMap[data.player_id] += 1;
                               //update this player's last hit time
                               playerTsMap[data.player_id] = data.ts;
+                              //update ballSensorId
+                              ballSensorId = data.ball_sensor_id;
 
                               //publish update for new player
                               updates.Add(new Update
@@ -281,6 +309,7 @@ namespace Queries
                               });
                               return updates;
                           }
+
                       }
                       //for all don't care state transitions...
                       return new List<Update> { new Update { toPublish = false, possessionData = new PlayerBallPossession { } } };
@@ -288,12 +317,11 @@ namespace Queries
                 //only select state changes that need to be published
                   .Where(update => update.toPublish)
                 //publish playerball possession data 
-                  .Select(result => result.possessionData)
-                  .Subscribe(output);               
-  
+                  .Select(result => result.possessionData);
+                
         }
        
-        public static List<IObservable<SensorData>> getPlayerStreamList(ref Subject<SensorData> src)
+        public static List<IObservable<SensorData>> getPlayerStreamList(IObservable<SensorData> src)
         {
             List<IObservable<SensorData>> playerStreamList =
                 new List<IObservable<SensorData>>();
@@ -330,7 +358,8 @@ namespace Queries
             foreach (var key in MetaData.PLAYER_MAP.Keys)
                 ts.Add(key, 0);
             return ts;
-        }        
+        }
+      
 
         public struct EventInfo
         {            
@@ -354,4 +383,4 @@ namespace Queries
     
     }//End of class: BallPossessionQuery
 
-}//End of Namespace: Queries
+}

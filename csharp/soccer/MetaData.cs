@@ -14,8 +14,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 
-namespace Queries
+namespace Utility
 {
     public sealed class MetaData
     {
@@ -63,7 +64,8 @@ namespace Queries
         
         //mapping of player_name to team_id 
         public static ReadOnlyDictionary<string, string> PLAYER_TEAM_MAP;
-        
+
+        public static long NS_PER_TICK = (1000L * 1000L * 1000L) / Stopwatch.Frequency;
         public static int PICO_TO_MILI = 1000000000;
         public static long SECOND_TO_PICO = 1000000000000;
         public static long VEL_COMPONENT_FACTOR = 10000000000;
@@ -130,6 +132,25 @@ namespace Queries
             {
                 ts = -99999,
                 sensor_id = -99999,
+                pos_x = -99999,
+                pos_y = -99999,
+                pos_z = -99999,
+                vel = -99999,
+                accel = -99999,
+                vel_x = -99999,
+                vel_y = -99999,
+                vel_z = -99999,
+                accel_x = -99999,
+                accel_y = -99999,
+                accel_z = -99999
+            };
+        }
+        public static SensorData getDefaultSensorDataWithSensorID(int id)
+        {
+            return new SensorData
+            {
+                ts = -99999,
+                sensor_id = id,
                 pos_x = -99999,
                 pos_y = -99999,
                 pos_z = -99999,
@@ -212,6 +233,7 @@ namespace Queries
         }
         public static void createTeamMap()
         {
+            Console.WriteLine("Creating player_name to team_id map");
             if (mInitialized)
             {
                 Dictionary<string,string> player_team=new Dictionary<string,string>();
