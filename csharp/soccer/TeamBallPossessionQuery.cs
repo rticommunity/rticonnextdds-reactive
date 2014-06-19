@@ -16,42 +16,54 @@ using System.Threading.Tasks;
 using System.Reactive.Subjects;
 using System.Reactive.Linq;
 using SoccerExtesions;
+using System.Diagnostics;
+using System.IO;
+using Utility;
 
-namespace Queries
+namespace Query2
 {
-    class TeamBallPossessionQuery
+    public static class TeamBallPossessionQuery
     {
+        public static IObservable<TeamBallPossession> teamBallPossessionProcessorFullGame(this IObservable<PlayerBallPossession> src)
+        {
+            return computeTeamBallPossessionFullGame(src);
+
+        }
+        public static IObservable<TeamBallPossession> teamBallPossessionProcessorTimeWindow(this IObservable<PlayerBallPossession> src, int timeWindowInSec)
+        {
+            return computeTeamBallPossessionTW(src, timeWindowInSec);
+        }
         //this function computes the TeamBall Possession data for the entire game
-        public static void teamBallPossessionFullGame(ref Subject<PlayerBallPossession> src,
-            ref Subject<TeamBallPossession> output)
+        public static  IObservable<TeamBallPossession> computeTeamBallPossessionFullGame(IObservable<PlayerBallPossession> src)
         {
             
             List<PlayerBallPossession> expList = new List<PlayerBallPossession>();
 
-            src
+            return src
             .Scan(new Aggregate { currTeam = "", pTimeA = 0.0, pTimeB = 0.0, ts = 0 }, (seed, val) =>
             {
                 seed = aggregatorFunction(seed, val, expList, 0);
                 return seed;
             })
-            .Select(b => getTeamPossessionData(b))
-            .Subscribe(output);
+            .Select(b => getTeamPossessionData(b));
+           
             
         }
 
         //this function computes the TeamBall Possession data for a specified time duration timeWindowInSec
-       public static void teamBallPossessionTimeWindow(int timeWindowInSec,ref Subject<PlayerBallPossession> src,
-            ref Subject<TeamBallPossession> output)
-        {         
+        public static IObservable<TeamBallPossession> computeTeamBallPossessionTW(IObservable<PlayerBallPossession> src,int timeWindowInSec)            
+        {
             
             var timeWindowInPico = timeWindowInSec * MetaData.SECOND_TO_PICO;
-            List<PlayerBallPossession> list_of_values = new List<PlayerBallPossession>();
+           // List<PlayerBallPossession> list_of_values = new List<PlayerBallPossession>();
             Aggregate seed= new Aggregate { currTeam = "", pTimeA = 0.0, pTimeB = 0.0, ts = 0 };
-            
-            src
+
+
+            return src
             .TimeWindowForTsDataAggregate(timeWindowInPico, "ts", seed, aggregatorFunction)
-            .Select(b => getTeamPossessionData(b))               
-            .Subscribe(output);           
+            .Select(b => getTeamPossessionData(b));
+            
+                        
 
         }
 

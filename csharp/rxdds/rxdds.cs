@@ -165,14 +165,19 @@ namespace RTI.RxDDS
       }
 
       listener = new DataReaderListener(subject, scheduler);
-
-      /* To customize the data reader QoS, use 
+      DDS.DataReaderQos r_qos = new DDS.DataReaderQos();
+      participant.get_default_datareader_qos(r_qos);
+      //Console.WriteLine("LIB CODE DR QOS: " + r_qos.history.kind);
+      //Console.WriteLine("LIB CODE DR QOS: " + r_qos.reliability.kind);
+      
+        /* To customize the data reader QoS, use 
          the configuration file USER_QOS_PROFILES.xml */
       DDS.DataReader reader = subscriber.create_datareader(
           topic,
-          DDS.Subscriber.DATAREADER_QOS_DEFAULT,
+          r_qos,//DDS.Subscriber.DATAREADER_QOS_DEFAULT,
           listener,
           DDS.StatusMask.STATUS_MASK_ALL);
+     
       if (reader == null)
       {
         listener = null;
@@ -219,6 +224,7 @@ namespace RTI.RxDDS
               DDS.InstanceStateKind.ANY_INSTANCE_STATE);
 
               System.Int32 dataLength = dataSeq.length;
+             
               for (int i = 0; i < dataLength; ++i)
               {
                 if (infoSeq.get_at(i).valid_data)
@@ -230,7 +236,9 @@ namespace RTI.RxDDS
                 else if (infoSeq.get_at(i).instance_state ==
                           DDS.InstanceStateKind.NOT_ALIVE_DISPOSED_INSTANCE_STATE)
                 {
+                 
                   /* FIXME: If the instance comes back online, it will break the Rx contract. */
+                  //Console.WriteLine("OnCompleted CALLED FROM LIB CODE on tid "+System.Threading.Thread.CurrentThread.ManagedThreadId);
                   subject.OnCompleted();
                 }
               }
@@ -239,6 +247,8 @@ namespace RTI.RxDDS
         }
         catch (DDS.Retcode_NoData)
         {
+            
+            subject.OnCompleted();
           return;
         }
         catch (Exception ex)
@@ -331,9 +341,14 @@ namespace RTI.RxDDS
       listener = new InstanceDataReaderListener(
           groupSubject, keyedSubjectDict, keySelector, comparer, handleKeyDict, scheduler);
 
+      DDS.DataReaderQos r_qos = new DDS.DataReaderQos();
+      participant.get_default_datareader_qos(r_qos);
+      //Console.WriteLine("LIB CODE DR QOS: " + r_qos.history.kind);
+      //Console.WriteLine("LIB CODE DR QOS: " + r_qos.reliability.kind);
+
       DDS.DataReader reader = subscriber.create_datareader(
           topic,
-          DDS.Subscriber.DATAREADER_QOS_DEFAULT,
+          r_qos,//DDS.Subscriber.DATAREADER_QOS_DEFAULT,
           listener,
           DDS.StatusMask.STATUS_MASK_ALL);
       if (reader == null)
@@ -912,6 +927,35 @@ namespace RTI.RxDDS
                      .Subscribe(observer);
       });
     }
+    public static IObservable<TSource> DoIf<TSource>
+        (this IObservable<TSource> source,
+        Func<bool> conditional,
+        Action<TSource> action)
+    {
+        if (!conditional())
+            return source;
+        else
+            return Observable.Create<TSource>(observer =>
+                {
+                    return source.Do(d => action(d)).Subscribe(observer);
+                });
+    }
+    public static IObservable<TSource> DoIf<TSource>
+      (this IObservable<TSource> source,
+      Func<bool> conditional,
+      Action<TSource> action,Action onCompleted)
+    {
+        if (!conditional())
+            return source;
+        else
+            return Observable.Create<TSource>(observer =>
+            {
+                return source
+                    .Do(d => action(d),()=>onCompleted())
+                    .Subscribe(observer);
+            });
+    }
+          
 
     public static IDisposable OnDataAvailable<TSource>(
         this IObservable<TSource> source,
@@ -1082,6 +1126,7 @@ namespace RTI.RxDDS
       {
         if (participant == null)
         {
+           
           participant =
               DDS.DomainParticipantFactory.get_instance().create_participant(
                   domainId,
@@ -1110,10 +1155,10 @@ namespace RTI.RxDDS
 
     public static void RegisterType<Type, TypeSupportClass>()
     {
-      typeof(TypeSupportClass)
-        .GetMethod("register_type", 
-                   System.Reflection.BindingFlags.Public | 
-                   System.Reflection.BindingFlags.Static)
+        typeof(TypeSupportClass)
+          .GetMethod("register_type",
+                     System.Reflection.BindingFlags.Public |
+                     System.Reflection.BindingFlags.Static)        
          .Invoke(null, new Object[] { Instance, typeof(Type).ToString() });
     }
     
@@ -1147,6 +1192,14 @@ namespace RTI.RxDDS
       {
         throw new ApplicationException("create_topic error");
       }
+     /* DDS.DataWriterQos dw_qos = new DDS.DataWriterQos();
+      participant.get_default_datawriter_qos(dw_qos);
+      dw_qos.reliability.kind = DDS.ReliabilityQosPolicyKind.RELIABLE_RELIABILITY_QOS;
+      dw_qos.history.kind = DDS.HistoryQosPolicyKind.KEEP_ALL_HISTORY_QOS;*/
+      DDS.DataWriterQos dw_qos = new DDS.DataWriterQos();
+      participant.get_default_datawriter_qos(dw_qos);
+      //Console.WriteLine("LIB CODE DW QOS: " + dw_qos.history.kind);
+      //Console.WriteLine("LIB CODE DW QOS: " + dw_qos.reliability.kind);
 
       DDS.DataWriter writer = publisher.create_datawriter(
           topic,
