@@ -15,93 +15,121 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Reactive.Concurrency;
 using SoccerExtesions;
+using System.Diagnostics;
+using System.IO;
+using Utility;
+using RTI.RxDDS;
 
-namespace Queries
+namespace Query3
 {
-    class HeatMapProcessor
+    public static class HeatMapProcessor
     {
-        public static void heatMap(ref Subject<PlayerData> src)
-        {        
-           
-            src
-                .SelectMany(pData =>
-                {
-                    //correct x and y co-ordinates of playerdata. 
-                    double x = pData.pos_x < 0 ? 0 : pData.pos_x;
-                    double y = pData.pos_y + MetaData.Y_OFFSET;
-                    if (y < 0)
-                        y = y * -1;
-
-                    //for each player's position find out the grid_cell index that the 
-                    //player is in for each of the 4 grid_dimensions. 
-                    List<GridInfo> output = new List<GridInfo>();
-                    for (int i = 0; i < 4; i++)
+        public static void heatMapProcessor(this IList<IObservable<PlayerData>> src,Subject<HeatMapData> heatMapSub)
+        {
+             computeHeatMap(src,heatMapSub);
+        }
+        
+        public static void computeHeatMap(IList<IObservable<PlayerData>> src,Subject<HeatMapData> heatMapSub)
+        {
+            //tracks PerformanceTest instance for a player stream in src. 
+            int pt_index = 0;
+            foreach (var strm in src)
+            {
+                //obtain PerformanceTest instance for this player stream from PerformanceTest.ptArray.
+                var pt = PerformanceTest.ptArray[pt_index]; pt_index++;
+                
+                strm
+                    .ObserveOn(Scheduler.Default)
+                    //if HeatMapStatus==true, then compute performance metrics for HeatMap Processor 
+                    .DoIf(() => PerformanceTest.HeatMapStatus, d =>
+                        {    
+                            //records time of arrival of PlayerData sample on this player stream
+                            pt.recordTime();
+                        })
+                    .SelectMany(pData =>
                     {
-                        int x_row = (int)Math.Ceiling(x / (MetaData.LEN_X / MetaData.X_DIM[i]));
-                        int y_col = (int)Math.Ceiling(y / (MetaData.LEN_Y / MetaData.Y_DIM[i]));
+                        //correct x and y co-ordinates of playerdata. 
+                        double x = pData.pos_x < 0 ? 0 : pData.pos_x;
+                        double y = pData.pos_y + MetaData.Y_OFFSET;
+                        if (y < 0)
+                            y = y * -1;
 
-                        output.Add(new GridInfo
+                        //for each player's position find out the grid_cell index that the 
+                        //player is in for each of the 4 grid_dimensions. 
+                        List<GridInfo> output = new List<GridInfo>();
+                        for (int i = 0; i < 4; i++)
                         {
-                            gridType = i,
-                            player_name = pData.player_name,
-                            ts = pData.ts,
-                            index = (x_row - 1) + (y_col - 1) * MetaData.X_DIM[i],
+                            int x_row = (int)Math.Ceiling(x / (MetaData.LEN_X / MetaData.X_DIM[i]));
+                            int y_col = (int)Math.Ceiling(y / (MetaData.LEN_Y / MetaData.Y_DIM[i]));
 
-                        });
-                    }
-                    return output;
-                })
-                //groupby on both gridType and player_name fields
-                .GroupBy(d => d.gridType + d.player_name)
-                .Subscribe(player_grid_stream =>
-                    {
-                        player_grid_stream
-                            .Scan(new TimeInCell
-                                {
-                                    ts = -1,
-                                    player_name = "",
-                                    gridType = -1,
-                                    prev_index = -1,
-                                    time_in_cell = -999,
-                                    curr_index = -1,
-                                },
-                               (seed, curr) =>
-                               {
-                                   //This function calculates the time for which the player was in gird_cell prev_index 
-                                   //as observed at timestamp ts when player is in grid_cell curr_index                                   
-                                   TimeInCell new_seed = new TimeInCell
-                                   {
-                                       ts = curr.ts,
-                                       player_name = curr.player_name,
-                                       gridType = curr.gridType,
-                                       prev_index = seed.curr_index,
-                                       curr_index = curr.index,
-                                       time_in_cell = -999
-                                   };
-                                   if (new_seed.prev_index == -1)
-                                       new_seed.prev_index = curr.index;
-                                   else
-                                   {
-                                       new_seed.time_in_cell = (curr.ts - seed.ts)
-                                           / MetaData.PICO_TO_MILI;
+                            output.Add(new GridInfo
+                            {
+                                gridType = i,
+                                player_name = pData.player_name,
+                                ts = pData.ts,
+                                index = (x_row - 1) + (y_col - 1) * MetaData.X_DIM[i],
 
-                                   }
-                                   return new_seed;
-                               })
-                               //computes heatMapData for the timeframe of 5 seconds. 
-                               .TimeWindowForTsDataAggregate(5 * MetaData.SECOND_TO_PICO, "ts",
-                                new HeatMapData
-                                {
-                                    ts = -1,
-                                    player_name = "",
-                                    gridType = -1,
-                                    heatmap = new Dictionary<int, double>()
-                                },
-                                aggregatorFunction)
-                                .Subscribe(data => printInfo(data));
-                                        
-                    });          
+                            });
+                        }
+                        return output;
+                    })
+                    //groupby on both gridType and player_name fields
+                     .GroupBy(d => d.gridType)
+                     .Subscribe(player_grid_stream =>
+                      {
+                          player_grid_stream
+                          .Scan(new TimeInCell
+                              {
+                                  ts = -1,
+                                  player_name = "",
+                                  gridType = -1,
+                                  prev_index = -1,
+                                  time_in_cell = -999,
+                                  curr_index = -1,
+                              },
+                             (seed, curr) =>
+                             {
+                                 //This function calculates the time for which the player was in gird_cell prev_index 
+                                 //as observed at timestamp ts when player is in grid_cell curr_index                                   
+                                 TimeInCell new_seed = new TimeInCell
+                                 {
+                                     ts = curr.ts,
+                                     player_name = curr.player_name,
+                                     gridType = curr.gridType,
+                                     prev_index = seed.curr_index,
+                                     curr_index = curr.index,
+                                     time_in_cell = -999
+                                 };
+                                 if (new_seed.prev_index == -1)
+                                     new_seed.prev_index = curr.index;
+                                 else
+                                 {
+                                     new_seed.time_in_cell = (curr.ts - seed.ts)
+                                         / MetaData.PICO_TO_MILI;
+                                 }
+                                 return new_seed;
+                             })
+                           //computes heatMapData for the timeframe of 5 seconds. 
+                          .TimeWindowForTsDataAggregate(5 * MetaData.SECOND_TO_PICO, "ts",
+                              new HeatMapData
+                              {
+                                  ts = -1,
+                                  player_name = "",
+                                  gridType = -1,
+                                  heatmap = new Dictionary<int, double>()
+                              },
+                              aggregatorFunction)
+                          .DoIf(() => PerformanceTest.HeatMapStatus, d =>
+                              {   
+                                  //computes time taken to process input PlayerData sample into a HeatMap output sample
+                                  pt.computeMetrics();
+                              })
+                          .Subscribe(heatMapSub);
+                      });
+            }
+            
           
         }
 
@@ -125,7 +153,7 @@ namespace Queries
                     }
                     else
                     {
-                        Console.WriteLine("attempt to access non-existent key");
+                        Console.WriteLine("HeatMapProcessor: Attempt to access non-existent key");
                     }
                     
                 }                
