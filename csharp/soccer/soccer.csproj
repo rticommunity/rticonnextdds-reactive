@@ -32,8 +32,8 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="nddsdotnet40">
-      <HintPath>C:\Program Files (x86)\RTI\ndds.5.0.0\lib\i86Win32dotnet4.0\nddsdotnet40.dll</HintPath>
+    <Reference Include="nddsdotnet45">
+      <HintPath>$(NDDSHOME)\lib\i86Win32dotnet4.0\nddsdotnet45.dll</HintPath>
     </Reference>
     <Reference Include="soccer_type">
       <HintPath>..\..\..\..\rxdds_repo_types\soccer\bin\Release-VS2010\soccer_type.dll</HintPath>
