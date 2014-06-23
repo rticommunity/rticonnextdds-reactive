@@ -82,13 +82,24 @@ RTI Connext user manual.
              A QoS profile groups a set of related QoS.
         -->
       <qos_profile name="autotune_profile"
-                   base_name="BuiltinQosLibExp::Generic.StrictReliable.LargeData.FastFlow"
+                   base_name="BuiltinQosLibExp::Generic.AutoTuning"
                    is_default_qos="false">
         <participant_qos>
           <transport_builtin>
             <mask>SHMEM</mask>
           </transport_builtin>
         </participant_qos>
+
+        <datareader_qos>
+          <resource_limits>
+            <max_instances>100</max_instances>
+            <max_samples>LENGTH_UNLIMITED</max_samples>
+            <max_samples_per_instance>LENGTH_UNLIMITED</max_samples_per_instance>
+            <initial_instances>38</initial_instances>
+            <initial_samples>1000</initial_samples>
+          </resource_limits>
+        </datareader_qos>
+
       </qos_profile>
       
       <qos_profile name="batching_profile"
@@ -99,7 +110,26 @@ RTI Connext user manual.
               <mask>SHMEM</mask>
             </transport_builtin>
           </participant_qos>
+        
+          <datareader_qos>
+            <resource_limits>
+              <max_instances>100</max_instances>
+              <max_samples>LENGTH_UNLIMITED</max_samples>
+              <max_samples_per_instance>LENGTH_UNLIMITED</max_samples_per_instance>
+              <initial_instances>38</initial_instances>
+              <initial_samples>1000</initial_samples>
+            </resource_limits>
+          </datareader_qos>
+        
           <datawriter_qos>
+            <resource_limits>
+              <max_instances>100</max_instances>
+              <max_samples>LENGTH_UNLIMITED</max_samples>
+              <max_samples_per_instance>LENGTH_UNLIMITED</max_samples_per_instance>
+              <initial_instances>38</initial_instances>
+              <initial_samples>100000</initial_samples>
+            </resource_limits>
+            
             <!-- When sending very many small data samples, the efficiency of
              the network can be increased by batching multiple samples together
              in a single protocol-level message (usually corresponding to a
@@ -116,14 +146,14 @@ RTI Connext user manual.
                the first of these limits is reached, the batch will be 
                flushed. -->
               <!-- 30 KB -->
-              <max_data_bytes>4000</max_data_bytes>
+              <max_data_bytes>16000</max_data_bytes>
               <max_samples>LENGTH_UNLIMITED</max_samples>
 
               <!-- Batches can be flushed to the network based on an elapsed 
                time -->
               <max_flush_delay>
                 <sec>0</sec>
-                <nanosec>100000000</nanosec>
+                <nanosec>10000000</nanosec>
               </max_flush_delay>
             </batch>
           </datawriter_qos>

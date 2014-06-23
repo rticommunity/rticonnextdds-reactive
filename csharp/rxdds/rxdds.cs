@@ -83,27 +83,45 @@ namespace RTI.RxDDS
   {
     public override void on_requested_deadline_missed(
      DDS.DataReader reader,
-     ref DDS.RequestedDeadlineMissedStatus status) { }
+     ref DDS.RequestedDeadlineMissedStatus status) 
+    {
+      Console.WriteLine("Requested deadline missed {0} total_count.", status.total_count);
+    }
 
     public override void on_requested_incompatible_qos(
         DDS.DataReader reader,
-        DDS.RequestedIncompatibleQosStatus status) { }
+        DDS.RequestedIncompatibleQosStatus status) 
+    {
+      Console.WriteLine("Requested incompatible qos {0} total_count.", status.total_count);
+    }
 
     public override void on_sample_rejected(
-        DDS.DataReader reader,
-        ref DDS.SampleRejectedStatus status) { }
+      DDS.DataReader reader,
+      ref DDS.SampleRejectedStatus status)
+    {
+      Console.WriteLine("Sample Rejected. Reason={0}", status.last_reason.ToString());
+    }
 
     public override void on_liveliness_changed(
         DDS.DataReader reader,
-        ref DDS.LivelinessChangedStatus status) { }
+        ref DDS.LivelinessChangedStatus status) 
+    {
+      Console.WriteLine("Liveliness changed. {0} now alive.", status.alive_count);
+    }
 
     public override void on_sample_lost(
         DDS.DataReader reader,
-        ref DDS.SampleLostStatus status) { }
+        ref DDS.SampleLostStatus status) 
+    {
+      Console.WriteLine("Sample lost. Reason={0}", status.last_reason.ToString());
+    }
 
     public override void on_subscription_matched(
         DDS.DataReader reader,
-        ref DDS.SubscriptionMatchedStatus status) { }
+        ref DDS.SubscriptionMatchedStatus status) 
+    {
+      Console.WriteLine("Subscription changed. {0} current count.", status.current_count);
+    }
 
     public override void on_data_available(
         DDS.DataReader reader) { }
@@ -165,16 +183,12 @@ namespace RTI.RxDDS
       }
 
       listener = new DataReaderListener(subject, scheduler);
-      DDS.DataReaderQos r_qos = new DDS.DataReaderQos();
-      participant.get_default_datareader_qos(r_qos);
-      //Console.WriteLine("LIB CODE DR QOS: " + r_qos.history.kind);
-      //Console.WriteLine("LIB CODE DR QOS: " + r_qos.reliability.kind);
       
-        /* To customize the data reader QoS, use 
-         the configuration file USER_QOS_PROFILES.xml */
+      /* To customize the data reader QoS, use 
+       the configuration file USER_QOS_PROFILES.xml */
       DDS.DataReader reader = subscriber.create_datareader(
           topic,
-          r_qos,//DDS.Subscriber.DATAREADER_QOS_DEFAULT,
+          DDS.Subscriber.DATAREADER_QOS_DEFAULT,
           listener,
           DDS.StatusMask.STATUS_MASK_ALL);
      

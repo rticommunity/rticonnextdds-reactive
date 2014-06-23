@@ -46,7 +46,7 @@
       <HintPath>$(NDDSHOME)\lib\i86Win32dotnet4.5\nddsdotnet45.dll</HintPath>
     </Reference>
     <Reference Include="soccer_type">
-      <HintPath>..\soccer_type\bin\Debug-VS2012\soccer_type.dll</HintPath>
+      <HintPath>..\soccer_type\bin\$(Configuration)-VS2012\soccer_type.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />

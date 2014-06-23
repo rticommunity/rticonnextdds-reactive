@@ -28,6 +28,11 @@ namespace soccer_publisher
 
         try
         {
+          // To increase verbosity.
+          /*NDDS.ConfigLogger.get_instance().set_verbosity_by_category(
+              NDDS.LogCategory.NDDS_CONFIG_LOG_CATEGORY_API,
+              NDDS.LogVerbosity.NDDS_CONFIG_LOG_VERBOSITY_STATUS_ALL);*/
+ 
             SensorDataPublisher.publish(domain_id, file_name);
         }
         catch(DDS.Exception)
@@ -55,7 +60,6 @@ namespace soccer_publisher
         Console.WriteLine("Discovery not complete");
         return false;
    }
-
 
     static void publish(int domain_id, String file_name)
     {
