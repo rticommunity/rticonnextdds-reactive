@@ -276,6 +276,7 @@ extern "C" int publisher_main(int domainId, char * filename, int sample_count, i
 
   gettimeofday(&end, NULL);
   long total_msec = end - start;
+  printf("lines read = %d, count = %d\n", lines_read, count);
   printf("Total sec = %lf and cumulative rate = %lf\n", (double) total_msec/1000, (double)count/total_msec*1000);
 
   /* Delete data sample */
