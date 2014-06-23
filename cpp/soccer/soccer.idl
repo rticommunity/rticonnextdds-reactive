@@ -1,0 +1,15 @@
+struct SensorData {
+	long sensor_id; //@key
+	long long ts;
+	long pos_x;
+	long pos_y;
+	long pos_z;
+	long vel;
+	long accel;
+	long vel_x;
+	long vel_y;
+	long vel_z;	
+	long accel_x;
+	long accel_y;
+	long accel_z;
+};

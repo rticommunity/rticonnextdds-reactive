@@ -264,7 +264,7 @@ namespace Query1
             //to next intensity that is observed for more than a second.             
             if (timeInterval < 1000)
             {
-                Console.WriteLine("{0} intensity observed for less than 1 sec", curValue.intensity);               
+                //Console.WriteLine("{0} intensity observed for less than 1 sec", curValue.intensity);               
                 
                 //values for currentRunningData must be added to lessThanSecDist and lessThanSecTime
                 //so that when next intensity range for > 1sec is observed, these values can be added 

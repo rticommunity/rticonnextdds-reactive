@@ -158,13 +158,19 @@ namespace soccer_publisher
             publication_sw.Start();
             start_ticks = publication_sw.ElapsedTicks;
             prev_ticks = start_ticks;
+            int[] ballSensors = { 4, 8, 10, 12 };
 
             while ((line = sReader.ReadLine())!= null && count < max_samples)
-            {                
-                count++;
+            {
+              try
+              {
+                linesRead++;
                 String[] fields = line.Split(',');            
                 
                 instance.sensor_id = Int32.Parse(fields[0]);
+                if(ballSensors.Contains(instance.sensor_id))
+                  continue;
+
                 instance.ts        = Int64.Parse(fields[1]);
                 instance.pos_x     = Int32.Parse(fields[2]);
                 instance.pos_y     = Int32.Parse(fields[3]);
@@ -177,42 +183,41 @@ namespace soccer_publisher
                 instance.accel_x   = Int32.Parse(fields[10]);
                 instance.accel_y   = Int32.Parse(fields[11]);
                 instance.accel_z   = Int32.Parse(fields[12]);
-                
-                try
-                {
-                    SensorData_writer.write(instance, ref instance_handle);
-                    if (count % calculation_point == 0)
-                    {                       
-                        long curr_ticks = publication_sw.ElapsedTicks;
-                        ncalcs++;
-                        long lapse_ticks = curr_ticks - prev_ticks;
-                        
-                        double lapse_msec = (double) lapse_ticks * ns_per_tick/(1000.0*1000.0);
-                        sum_lapse_msec += lapse_msec;
-                        if (lapse_msec < min_lapse)
-                            min_lapse = lapse_msec;
-                        if (lapse_msec > max_lapse)
-                            max_lapse = lapse_msec;                        
-                        prev_ticks = curr_ticks;
-                        
-                        Console.WriteLine("Took {0} millisec to send next {1} samples: {2}",
-                            lapse_msec, calculation_point, count);
-                        
-                        double rate = (double)(calculation_point*1000L*1000L*1000L) / (double)(lapse_ticks * ns_per_tick);
-                        if (rate < min_rate)
-                            min_rate = rate;
-                        if (rate > max_rate)
-                            max_rate = rate;
-                        Console.WriteLine("publishing rate:{0} samples/sec", rate);
-                    }
-                }
-                catch (DDS.Exception e)
-                {
-                    Console.WriteLine("write error {0}", e);
-                }
 
-                if((target_rate != 0) && (count % 100==0))
-                    System.Threading.Thread.Sleep(1000*100/target_rate*98/100);
+                count++;
+                SensorData_writer.write(instance, ref instance_handle);
+                if (count % calculation_point == 0)
+                {                       
+                    long curr_ticks = publication_sw.ElapsedTicks;
+                    ncalcs++;
+                    long lapse_ticks = curr_ticks - prev_ticks;
+                        
+                    double lapse_msec = (double) lapse_ticks * ns_per_tick/(1000.0*1000.0);
+                    sum_lapse_msec += lapse_msec;
+                    if (lapse_msec < min_lapse)
+                        min_lapse = lapse_msec;
+                    if (lapse_msec > max_lapse)
+                        max_lapse = lapse_msec;                        
+                    prev_ticks = curr_ticks;
+                        
+                    Console.WriteLine("Took {0} millisec to send next {1} samples: {2}",
+                        lapse_msec, calculation_point, count);
+                        
+                    double rate = (double)(calculation_point*1000L*1000L*1000L) / (double)(lapse_ticks * ns_per_tick);
+                    if (rate < min_rate)
+                        min_rate = rate;
+                    if (rate > max_rate)
+                        max_rate = rate;
+                    Console.WriteLine("publishing rate:{0} samples/sec", rate);
+                }
+              }
+              catch (DDS.Exception e)
+              {
+                  Console.WriteLine("write error {0}", e);
+              }
+
+              if((target_rate != 0) && (count % 100==0))
+                  System.Threading.Thread.Sleep(1000*100/target_rate*90/100);
             }
             end_ticks = publication_sw.ElapsedTicks;
             publication_sw.Stop();
@@ -225,6 +230,7 @@ namespace soccer_publisher
         Console.WriteLine("Target rate = {0} samples/sec.", target_rate);
         Console.WriteLine("Overall Publication Rate Observed: {0} per sec", rate_pub*1000);
         Console.WriteLine("total time for playback in seconds: {0}", total_time_ms/1000);
+        Console.WriteLine("lines read = {0}, samples written = {1}", linesRead, count);
         
         /* Delete data sample */
         try {
@@ -274,11 +280,12 @@ namespace soccer_publisher
     private static long end_ticks = 0;
     private static long ncalcs = 0;
     private static long count = 0;
+    private static long linesRead = 0;
     private static double sum_lapse_msec = 0;
     private static double min_rate = Double.MaxValue, max_rate = Double.MinValue;
     private static double min_lapse = Double.MaxValue, max_lapse = Double.MinValue;
     private static int no_dr = 1;
-    private static long calculation_point = 10000;
+    private static long calculation_point = 100000;
     private static int target_rate = 2000; // samples/sec
     private static int max_samples = 100000;
 }

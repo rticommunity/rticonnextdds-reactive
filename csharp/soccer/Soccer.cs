@@ -98,13 +98,14 @@ namespace Queries
                     .FromTopic<SensorData>(participant, "Raw SensorData");            
                 
                 //used to keep track of number of output samples produced from a query. 
-                //int output_count = 0;
+                int output_count = 0;
 
                 //initialize PerformanceTest.ptArray that stores a PerformanceTest obj for each player stream 
                 PerformanceTest.initializePtArr();
                 //set AvgProcessorStatus equal to true to compute performance metrics for AverageProcessor. 
                 PerformanceTest.AvgProcessorStatus = false;
                 PerformanceTest.CurrRunningStatus = false;
+                PerformanceTest.AggRunningStatus = true;
 
                 //start throughput timer before query 
                 PerformanceTest.startThroughputSW();
@@ -144,7 +145,16 @@ namespace Queries
                                          .CurrentRunningAnalysis()
                                          .FullGameAggregateRunningDataAnalysis()
                                          .Merge()
-                                         //.Subscribe(prog.mAggregateRunningDataWriter);
+                                         .DoIf(() => PerformanceTest.AggRunningStatus,
+                                             d => output_count++,
+                                             () =>
+                                             {
+                                               if (PerformanceTest.AggRunningStatus)
+                                               {
+                                                 PerformanceTest.postProcess("AggRunning_stats.txt");
+                                                 Console.WriteLine("Inputs = {0}. Output count = {1} ", input_count, output_count);
+                                               }
+                                             })
                                          .Subscribe();
 
                 //Query2
