@@ -44,8 +44,11 @@ namespace Utility
 
         public PerformanceTest()
         {           
-            InputCount = 0; OutputCount = 0;
-            SumComputationTime = 0; MinComputationTime = Double.MaxValue; MaxComputationTime = Double.MinValue;
+            InputCount = 0; 
+            OutputCount = 0;
+            SumComputationTime = 0; 
+            MinComputationTime = Double.MaxValue; 
+            MaxComputationTime = Double.MinValue;
             prev_time = -1;            
             sw = Stopwatch.StartNew();
         }
@@ -57,7 +60,6 @@ namespace Utility
             for (var i = 0; i < MetaData.PLAYER_MAP.Count; i++)
                 arr[i] = new PerformanceTest();
             ptArray = arr;
-          
         }
         
         //records time at which input sample arrives. 
@@ -98,7 +100,6 @@ namespace Utility
         //results are written to "file_name". 
         public static void postProcess(string file_name)
         {
-            
             throughput_sw.Stop();
             long tot = 0; double sum_comp_time = 0;
             double min_time = Double.MaxValue, max_time = Double.MinValue;
@@ -114,9 +115,8 @@ namespace Utility
              }
             double throughput = (double)(tot * 1000 * 1000 * 1000) 
                 / (double)(throughput_sw.ElapsedTicks * PerformanceTest.NS_PER_TICK);
-
             
-            using (StreamWriter file = new StreamWriter("D:\\" + file_name + ".txt"))
+            using (StreamWriter file = new StreamWriter(file_name))
             {
                 file.WriteLine("total:{0}. Avg time:{1}", tot, sum_comp_time / tot);
                 file.WriteLine("Min computation time in micro-sec: " + min_time);
@@ -124,13 +124,7 @@ namespace Utility
 
                 file.WriteLine("\nThroughput samples/sec: " + throughput);
                 file.WriteLine("Total time taken in seconds: " + throughput_sw.ElapsedMilliseconds / 1000.0);  
-               
-            }
-                  
+            }         
         }
-
-        
-        
-
     }
 }

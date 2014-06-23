@@ -33,7 +33,6 @@ using Query4;
 
 namespace Queries
 {
-    
     class Soccer
     {
         //data-writers for different typed outputs. 
@@ -54,8 +53,13 @@ namespace Queries
         {   
             Console.WriteLine("Running QueryProcessor. Press Enter to exit...");            
            
-            //DDS domain participant
-            DDS.DomainParticipant participant = null;            
+            if (args.Length != 1)
+            {
+              Console.WriteLine("Usage: soccer.exe <domain-id>");
+              return;
+            }
+            else
+              DefaultParticipant.DomainId = Int32.Parse(args[0]);
 
             try
             {
@@ -72,11 +76,10 @@ namespace Queries
                 MetaData.createTeamMap();
 
                 //get an instance of default domain participant
-                participant =DefaultParticipant.Instance;                
+                DDS.DomainParticipant participant = DefaultParticipant.Instance;                
 
                 //Register types that will be used in application 
                 registerTypes();
-
                 
                 Soccer prog = new Soccer();   
                 //initialize dataWriters  
@@ -91,24 +94,28 @@ namespace Queries
                 var heatMapSub = new Subject<HeatMapProcessor.HeatMapData>();
                 
                 //create rawSensorStream from data received on DDS topic "Raw SensorData"
-                IObservable<SensorData> rawSensorStream =DDSObservable
+                IObservable<SensorData> rawSensorStream = DDSObservable
                     .FromTopic<SensorData>(participant, "Raw SensorData");            
                 
                 //used to keep track of number of output samples produced from a query. 
-                int output_count = 0;
+                //int output_count = 0;
 
                 //initialize PerformanceTest.ptArray that stores a PerformanceTest obj for each player stream 
                 PerformanceTest.initializePtArr();
                 //set AvgProcessorStatus equal to true to compute performance metrics for AverageProcessor. 
-                PerformanceTest.AvgProcessorStatus = true;
-                
+                PerformanceTest.AvgProcessorStatus = false;
+                PerformanceTest.CurrRunningStatus = false;
 
                 //start throughput timer before query 
-                PerformanceTest.startThroughputSW();               
-               
-                //AverageProcessor               
-                disposable= rawSensorStream
-                     .ObserveOn(Scheduler.Default)
+                PerformanceTest.startThroughputSW();
+                int input_count = 0;
+                var countedStream = 
+                  rawSensorStream.Do(data => ++input_count)
+                                 .Publish();
+                
+                //query-1 AverageProcessor               
+                /*disposable= countedStream
+                     //.ObserveOn(new EventLoopScheduler())
                      .averageProcessor()
                      .Merge()
                      //if PerformanceTest.AvgProcessorStatus is true, then perform Do side-effect. 
@@ -116,27 +123,41 @@ namespace Queries
                          d => output_count++,
                          () =>
                          {
+                           if (PerformanceTest.AvgProcessorStatus)
+                           {
                              PerformanceTest.postProcess("averageProcessor_stats.txt");
-                             Console.WriteLine("check on output count: " + output_count);
+                             Console.WriteLine("Inputs = {0}. Output count = {1} ", input_count, output_count);
+                           }
                          })
-                     .Subscribe(prog.mPlayerDataWriter);       
+                     //.Subscribe(prog.mPlayerDataWriter);
+                       .Subscribe();*/
                 
                 //Query-1 CurrentRunningProcessor
-                //disposable= rawSensorStream.averageProcessor().currentRunningProcessor().Merge().Subscribe(prog.mCurrentRunningDataWriter);
+                /*disposable = countedStream.Average()
+                                          .CurrentRunningAnalysis()
+                                          .Merge()
+                                        //.Subscribe(prog.mCurrentRunningDataWriter);
+                                          .Subscribe();*/
                 
                 //Query-1 AggregateRunningProcessor
-                //disposable= rawSensorStream.averageProcessor().currentRunningProcessor().aggregateRunningDataProcessorFullGame().Merge().Subscribe(prog.mAggregateRunningDataWriter);
+                disposable= countedStream.Average()
+                                         .CurrentRunningAnalysis()
+                                         .FullGameAggregateRunningDataAnalysis()
+                                         .Merge()
+                                         //.Subscribe(prog.mAggregateRunningDataWriter);
+                                         .Subscribe();
 
                 //Query2
-                //disposable= rawSensorStream.ballPossessionProcessor(ref eventInfoStream).Subscribe(prog.mPlayerBallPossessionDataWriter);
-                
+                //disposable= countedStream.ballPossessionProcessor(ref eventInfoStream).Subscribe(prog.mPlayerBallPossessionDataWriter);
+
                 /*//Query3
-                rawSensorStream.averageProcessor().heatMapProcessor(heatMapSub);
-                disposable= heatMapSub.Subscribe();*/                 
-                 
+                countedStream.averageProcessor().heatMapProcessor(heatMapSub);
+                disposable= heatMapSub.Subscribe();*/
+
                 //Query4
-                //disposable= rawSensorStream.shotOnGoalProcessor(ref eventInfoStream).Subscribe(prog.mshotOnGoalDataWriter);
-               
+                //disposable= countedStream.shotOnGoalProcessor(ref eventInfoStream).Subscribe(prog.mshotOnGoalDataWriter);
+
+                countedStream.Connect();
                 Console.ReadLine();           
                
 

@@ -29,39 +29,32 @@ namespace Query1
     public static class AggregateRunningAnalysis
     {
         //aggregateRunningFullGame Query as IEnumerable<IObservable<CurrentRunningData>> extension method
-        public static IList<IObservable<AggregateRunningData>> aggregateRunningDataProcessorFullGame(this IList<IObservable<CurrentRunningData>> src)
+      public static IEnumerable<IObservable<AggregateRunningData>> FullGameAggregateRunningDataAnalysis(this IEnumerable<IObservable<CurrentRunningData>> src)
         {
             return computeAggregateRunningDataFull(src);
         }
         
         ////aggregateRunningTimeSpan Query as IEnumerable<IObservable<CurrentRunningData>> extension method
-        public static IList<IObservable<AggregateRunningData>> aggregateRunningDataProcessorTimeSpan(this IList<IObservable<CurrentRunningData>> src,int timeSpanInSec)
+        public static IEnumerable<IObservable<AggregateRunningData>>
+          TimeSpanAggregateRunningDataAnalysis(this IEnumerable<IObservable<CurrentRunningData>> src, int timeSpanInSec)
         {
             return computeAggregateRunningDataTS(src, timeSpanInSec);
         }
         
-        public static IList<IObservable<AggregateRunningData>> computeAggregateRunningDataFull(IList<IObservable<CurrentRunningData>> src)
+        public static IEnumerable<IObservable<AggregateRunningData>> 
+          computeAggregateRunningDataFull(IEnumerable<IObservable<CurrentRunningData>> src)
         {
-            IList<IObservable<AggregateRunningData>> aggList=new List<IObservable<AggregateRunningData>>();
-            
-            //tracks PerformanceTest instance for a player stream in src. 
-            int pt_index = 0;
-            
-            foreach(var playerStream in src)
-            {
-                //obtain PerformanceTest instance for this player stream from PerformanceTest.ptArray.
-                var pt = PerformanceTest.ptArray[pt_index]; pt_index++;
-                
-                aggList.Add(
-                    playerStream
-                    .ObserveOn(Scheduler.Default)
+            return src.Select((IObservable<CurrentRunningData> playerStream, int index) => {
+             var pt = PerformanceTest.ptArray[index];
+             return playerStream
+                    //.ObserveOn(Scheduler.Default)
                     //if AggRunningStatus==true, then compute performance metrics for AggregateRunning Processor
                     .DoIf(()=>PerformanceTest.AggRunningStatus,d=>pt.recordTime())
                     //for each player do a rolling aggregate on values. 
                     .Scan(new Composite
                         {
                             toPublish = true,
-                            data = new AggregateRunningData()
+                            data = new AggregateRunningData
                             {
                                 ts = 0,
                                 player_id = "",
@@ -90,28 +83,19 @@ namespace Query1
                         .Where(data => data.toPublish == true)
                         .Select(val => val.data)
                         //computes time taken to process input CurrentRunning sample into a AggregateRunning output sample
-                        .DoIf(()=>PerformanceTest.AggRunningStatus,d=>pt.computeMetrics()));
-                
-            }
-            return aggList;
+                        .DoIf(()=>PerformanceTest.AggRunningStatus,d=>pt.computeMetrics());
+            });
         }
         
         
         
-        public static IList<IObservable<AggregateRunningData>> computeAggregateRunningDataTS(IList<IObservable<CurrentRunningData>> src, int timeSpanInSec)
+        public static IEnumerable<IObservable<AggregateRunningData>> 
+          computeAggregateRunningDataTS(IEnumerable<IObservable<CurrentRunningData>> src, int timeSpanInSec)
         {
-            var givenInterval = timeSpanInSec * MetaData.SECOND_TO_PICO;
-            IList<IObservable<AggregateRunningData>> aggList = new List<IObservable<AggregateRunningData>>();
-            
-            //tracks PerformanceTest instance for a player stream in src. 
-            int pt_index = 0;
-
-            foreach (var playerStream in src)
-            {
-                //obtain PerformanceTest instance for this player stream from PerformanceTest.ptArray.
-                var pt = PerformanceTest.ptArray[pt_index]; pt_index++;
-               
-                Composite seed = new Composite
+          var givenInterval = timeSpanInSec * MetaData.SECOND_TO_PICO;
+          return src.Select((IObservable<CurrentRunningData> playerStream, int index) => {
+            var pt = PerformanceTest.ptArray[index];
+            Composite seed = new Composite
                         {
                             toPublish = true,
                             lessThanSecDist=0,
@@ -134,17 +118,15 @@ namespace Query1
                                 sprint_time = 0
                             }
                         };
-                aggList.Add(playerStream
+            return playerStream
                     //if AggRunningStatus==true, then compute performance metrics for AggregateRunning Processor
                     .DoIf(()=>PerformanceTest.AggRunningStatus,d => pt.recordTime())
                     .TimeWindowForTsDataAggregate(givenInterval, "ts_start", seed, aggregatorFunction)                    
                     .Where(d => d.toPublish == true)
                     .Select(d => d.data)
                     //computes time taken to process input CurrentRunning sample into a AggregateRunning output sample
-                    .DoIf(()=>PerformanceTest.AggRunningStatus,d=> pt.computeMetrics()));
-            }
-            return aggList;
-
+                    .DoIf(()=>PerformanceTest.AggRunningStatus,d=> pt.computeMetrics());
+          });
         }
 
         //This function adds CurrentRunningData element's time/distance
