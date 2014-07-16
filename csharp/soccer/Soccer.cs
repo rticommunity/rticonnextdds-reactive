@@ -94,8 +94,12 @@ namespace Queries
                 var heatMapSub = new Subject<HeatMapProcessor.HeatMapData>();
                 
                 //create rawSensorStream from data received on DDS topic "Raw SensorData"
+                DDS.Duration_t timeout;
+                timeout.nanosec = 0;
+                timeout.sec = 10;
+
                 IObservable<SensorData> rawSensorStream = DDSObservable
-                    .FromTopic<SensorData>(participant, "Raw SensorData");            
+                    .FromTopicWaitSet<SensorData>(participant, "Raw SensorData", timeout);            
                 
                 //used to keep track of number of output samples produced from a query. 
                 int output_count = 0;

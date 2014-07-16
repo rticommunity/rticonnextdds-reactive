@@ -117,6 +117,73 @@ bool wait_for_readers(DDSDataWriter * writer,
   return false;
 }
 
+int myParseInt32(const char * line, int length, int* pos)
+{
+    int num = 0;
+    bool neg = false;
+    int i = *pos;
+    for (; i < length; ++i)
+    {
+        if (line[i] == ' ')
+            continue;
+        else if ((line[i] == ',') || (line[i] == '\n'))
+            break;
+        else if (line[i] == '-')
+            neg = true;
+        else
+        {
+            num = num * 10 + ((int)line[i]) - 48;
+        }
+    }
+    *pos = ++i;
+    if (neg)
+        return -num;
+    else
+        return num;
+}
+
+long long myParseLongLong(const char * line, int length, int* pos)
+{
+    long long num = 0;
+    bool neg = false;
+    int i = *pos;
+    for (; i < length; ++i)
+    {
+        if (line[i] == ' ')
+            continue;
+        else if ((line[i] == ',') || (line[i] == '\n'))
+            break;
+        else if (line[i] == '-')
+            neg = true;
+        else
+        {
+            num = num * 10 + ((int)line[i]) - 48;
+        }
+    }
+    *pos = ++i;
+    if (neg)
+        return -num;
+    else
+        return num;
+}
+
+void print(SensorData * sensor_data)
+{
+  printf("%d,%lld,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+      sensor_data->sensor_id,
+      sensor_data->ts,
+      sensor_data->pos_x,
+      sensor_data->pos_y,
+      sensor_data->pos_z,
+      sensor_data->vel,
+      sensor_data->accel,
+      sensor_data->vel_x,
+      sensor_data->vel_y,
+      sensor_data->vel_z,
+      sensor_data->accel_x,
+      sensor_data->accel_y,
+      sensor_data->accel_z);
+}
 
 extern "C" int publisher_main(int domainId, char * filename, int sample_count, int target_rate)
 {
@@ -223,33 +290,64 @@ extern "C" int publisher_main(int domainId, char * filename, int sample_count, i
   gettimeofday(&start, NULL);
   prev = start;
 
+  char line[1024];
+  bool myparse = true;
 	for (count=0; (sample_count == 0) || (count < sample_count);) 
 	{
-		if(EOF==fscanf(fin, "%hu,%llu,%d,%d,%d,%u,%d,%d,%d,%d,%d,%d,%d",
-						&sensor_data->sensor_id,
-						&sensor_data->ts,
-						&sensor_data->pos_x,
-						&sensor_data->pos_y,
-						&sensor_data->pos_z,
-						&sensor_data->vel,
-						&sensor_data->accel,
-						&sensor_data->vel_x,
-						&sensor_data->vel_y,
-						&sensor_data->vel_z,
-						&sensor_data->accel_x,
-						&sensor_data->accel_y,
-						&sensor_data->accel_z))
-		{
-			break;
-		}
+    if(myparse)
+    {
+      if(NULL == fgets(line, 2014, fin))
+        break;
 
-		lines_read++;
-		if((sensor_data->sensor_id == 4)  || /* ball sensors */
-		   (sensor_data->sensor_id == 8)  ||
-		   (sensor_data->sensor_id == 10) ||
-		   (sensor_data->sensor_id == 12))
-		   continue;
+      lines_read++;
+      int pos = 0;
+      int length = strlen(line);
+      sensor_data->sensor_id = myParseInt32(line, length, &pos);
+      /*
+      if((sensor_data->sensor_id == 4)  ||
+		     (sensor_data->sensor_id == 8)  ||
+		     (sensor_data->sensor_id == 10) ||
+		     (sensor_data->sensor_id == 12))
+      {
+        continue;
+      }*/
 
+      sensor_data->ts        = myParseLongLong(line,  length, &pos);
+      sensor_data->pos_x     = myParseInt32(line, length, &pos);
+      sensor_data->pos_y     = myParseInt32(line, length, &pos);
+      sensor_data->pos_z     = myParseInt32(line, length, &pos);
+      sensor_data->vel       = myParseInt32(line, length, &pos);
+      sensor_data->accel     = myParseInt32(line, length, &pos);
+      sensor_data->vel_x     = myParseInt32(line, length, &pos);
+      sensor_data->vel_y     = myParseInt32(line, length, &pos);
+      sensor_data->vel_z     = myParseInt32(line, length, &pos);
+      sensor_data->accel_x   = myParseInt32(line, length, &pos);
+      sensor_data->accel_y   = myParseInt32(line, length, &pos);
+      sensor_data->accel_z   = myParseInt32(line, length, &pos);
+
+      //print(sensor_data);
+    }
+    else 
+    {
+      if(EOF==fscanf(fin, "%hu,%llu,%d,%d,%d,%u,%d,%d,%d,%d,%d,%d,%d",
+              &sensor_data->sensor_id,
+						  &sensor_data->ts,
+						  &sensor_data->pos_x,
+						  &sensor_data->pos_y,
+						  &sensor_data->pos_z,
+						  &sensor_data->vel,
+						  &sensor_data->accel,
+						  &sensor_data->vel_x,
+						  &sensor_data->vel_y,
+						  &sensor_data->vel_z,
+						  &sensor_data->accel_x,
+						  &sensor_data->accel_y,
+						  &sensor_data->accel_z))
+		  {
+			  break;
+		  }
+ 		  lines_read++;
+    }
 		retcode = SensorData_writer->write(*sensor_data, DDS_HANDLE_NIL);
 		if (retcode != DDS_RETCODE_OK) {
 			printf("write error %d\n", retcode);
@@ -270,8 +368,8 @@ extern "C" int publisher_main(int domainId, char * filename, int sample_count, i
         printf("publishing rate: %lf samples/sec\n", rate);
     }
 
-		//if((target_rate != 0) && (count % 100==0))
-    //  NDDSUtility::sleep(DDS_Duration_t::from_micros(1000*1000*100/target_rate*98/100));
+		if((target_rate != 0) && (count % 100==0))
+      NDDSUtility::sleep(DDS_Duration_t::from_micros(1000*1000*100/target_rate*98/100));
 	}
 
   gettimeofday(&end, NULL);

@@ -127,164 +127,453 @@ namespace RTI.RxDDS
         DDS.DataReader reader) { }
   };
 
+  class ObservableTopicWaitSet<T> : IObservable<T> where T : class , DDS.ICopyable<T>, new()
+  {
+      public ObservableTopicWaitSet(DDS.DomainParticipant participant,
+                                    string topicName,
+                                    string typeName,
+                                    DDS.Duration_t tmout)
+      {
+          mutex = new Object();
+
+          this.scheduler = new EventLoopScheduler();
+          this.timeout = tmout;
+
+          if (typeName == null)
+              this.typeName = typeof(T).ToString();
+          else
+              this.typeName = typeName;
+
+          this.participant = participant;
+          this.topicName = topicName;
+
+          if (this.scheduler == null ||
+             this.typeName == null ||
+             this.participant == null ||
+             this.topicName == null)
+          {
+              throw new ArgumentNullException("ObservableTopic: Null parameters detected");
+          }
+      }
+
+      public void Dispose()
+      {
+
+      }
+      private void initializeDataReader(DDS.DomainParticipant participant)
+      {
+          DDS.Subscriber subscriber = participant.create_subscriber(
+              DDS.DomainParticipant.SUBSCRIBER_QOS_DEFAULT,
+              null /* listener */,
+              DDS.StatusMask.STATUS_MASK_NONE);
+          if (subscriber == null)
+          {
+              throw new ApplicationException("create_subscriber error");
+          }
+
+          DDS.Topic topic = participant.create_topic(
+              topicName,
+              typeName,
+              DDS.DomainParticipant.TOPIC_QOS_DEFAULT,
+              null /* listener */,
+              DDS.StatusMask.STATUS_MASK_NONE);
+          if (topic == null)
+          {
+              throw new ApplicationException("create_topic error");
+          }
+
+          /* To customize the data reader QoS, use 
+           the configuration file USER_QOS_PROFILES.xml */
+          reader = subscriber.create_datareader(
+              topic,
+              DDS.Subscriber.DATAREADER_QOS_DEFAULT,
+              null,
+              DDS.StatusMask.STATUS_MASK_ALL);
+
+          if (reader == null)
+          {
+              throw new ApplicationException("create_datareader error");
+          }
+ 
+          status_condition = reader.get_statuscondition();
+
+          try
+          {
+              int mask =
+                  (int) DDS.StatusKind.DATA_AVAILABLE_STATUS       |
+                  (int) DDS.StatusKind.SUBSCRIPTION_MATCHED_STATUS |
+                  (int) DDS.StatusKind.LIVELINESS_CHANGED_STATUS   |
+                  (int) DDS.StatusKind.SAMPLE_LOST_STATUS          |
+                  (int) DDS.StatusKind.SAMPLE_REJECTED_STATUS;
+              
+              status_condition.set_enabled_statuses((DDS.StatusMask) mask);
+          }
+          catch (DDS.Exception e)
+          {
+              throw new ApplicationException("set_enabled_statuses error {0}", e);
+          }
+
+          waitset = new DDS.WaitSet();
+
+          try
+          {
+              waitset.attach_condition(status_condition);
+          }
+          catch (DDS.Exception e)
+          {
+              throw new ApplicationException("attach_condition error {0}", e);
+          }
+      }
+
+      private void printStatusKind (int kind)
+      {
+        if((kind & 1) == 1)
+          Console.WriteLine("INCONSISTENT_TOPIC_STATUS");
+        if((kind & 2) == 2)
+          Console.WriteLine("OFFERED_DEADLINE_MISSED_STATUS");
+        if((kind & 4) == 4)
+          Console.WriteLine("REQUESTED_DEADLINE_MISSED_STATUS");
+        if((kind & 32) == 32)
+          Console.WriteLine("OFFERED_INCOMPATIBLE_QOS_STATUS");
+        if((kind & 64) == 64)
+          Console.WriteLine("REQUESTED_INCOMPATIBLE_QOS_STATUS");
+        if((kind & 128) == 128)
+          Console.WriteLine("SAMPLE_LOST_STATUS");
+        if((kind & 256) == 256)
+          Console.WriteLine("SAMPLE_REJECTED_STATUS");
+        if((kind & 512) == 512)
+          Console.WriteLine("DATA_ON_READERS_STATUS");
+        if((kind & 1024) == 1024)
+          Console.WriteLine("DATA_AVAILABLE_STATUS");
+        if((kind & 2048) == 2048)
+          Console.WriteLine("LIVELINESS_LOST_STATUS");
+        if((kind & 4096) == 4096)
+          Console.WriteLine("LIVELINESS_CHANGED_STATUS");
+        if((kind & 8192) == 8192)
+          Console.WriteLine("PUBLICATION_MATCHED_STATUS");
+        if((kind & 16384) == 16384)
+          Console.WriteLine("SUBSCRIPTION_MATCHED_STATUS");
+        if((kind & 16777216) == 16777216)
+          Console.WriteLine("RELIABLE_WRITER_CACHE_CHANGED_STATUS");
+        if((kind & 33554432) == 33554432)
+          Console.WriteLine("RELIABLE_READER_ACTIVITY_CHANGED_STATUS");
+        if((kind & 67108864) == 67108864)
+          Console.WriteLine("DATA_WRITER_CACHE_STATUS");
+        if((kind & 134217728) == 134217728)
+          Console.WriteLine("DATA_WRITER_PROTOCOL_STATUS");
+        if((kind & 268435456) == 268435456)
+          Console.WriteLine("DATA_READER_CACHE_STATUS");
+        if((kind & 536870912) == 536870912)
+          Console.WriteLine("DATA_READER_PROTOCOL_STATUS");
+        if((kind & 1073741824) == 1073741824)
+          Console.WriteLine("DATA_WRITER_DESTINATION_UNREACHABLE_STATUS");
+        if((kind & 2147483648) == 2147483648)
+          Console.WriteLine("DATA_WRITER_SAMPLE_REMOVED_STATUS");
+      }
+
+      private void receiveData() 
+      {
+        int count = 0;
+        DDS.ConditionSeq active_conditions = new DDS.ConditionSeq();
+        while (true)
+        {
+            try
+            {
+                waitset.wait(active_conditions, timeout);
+                for (int c = 0; c < active_conditions.length; ++c)
+                {
+                    if (active_conditions.get_at(c) == status_condition)
+                    {
+                        DDS.StatusMask triggeredmask =
+                            reader.get_status_changes();
+
+                        if ((triggeredmask &
+                            (DDS.StatusMask)
+                             DDS.StatusKind.DATA_AVAILABLE_STATUS) != 0)
+                        {
+                            try
+                            {
+                                DDS.TypedDataReader<T> dataReader
+                                    = (DDS.TypedDataReader<T>)reader;
+
+                                dataReader.take(
+                                    dataSeq,
+                                    infoSeq,
+                                    DDS.ResourceLimitsQosPolicy.LENGTH_UNLIMITED,
+                                    DDS.SampleStateKind.ANY_SAMPLE_STATE,
+                                    DDS.ViewStateKind.ANY_VIEW_STATE,
+                                    DDS.InstanceStateKind.ANY_INSTANCE_STATE);
+
+                                System.Int32 dataLength = dataSeq.length;
+                                Console.WriteLine("Received {0}", dataLength);
+                                for (int i = 0; i < dataLength; ++i)
+                                {
+                                    if (infoSeq.get_at(i).valid_data)
+                                    {
+                                        T temp = new T();
+                                        temp.copy_from(dataSeq.get_at(i));
+                                        subject.OnNext(temp);
+                                    }
+                                    else if (infoSeq.get_at(i).instance_state ==
+                                              DDS.InstanceStateKind.NOT_ALIVE_DISPOSED_INSTANCE_STATE)
+                                    {
+
+                                        /* FIXME: If the instance comes back online, 
+                                         * it will break the Rx contract. */
+                                        //Console.WriteLine("OnCompleted CALLED FROM LIB CODE on tid "+ 
+                                        //System.Threading.Thread.CurrentThread.ManagedThreadId);
+                                        subject.OnCompleted();
+                                    }
+                                }
+
+                                dataReader.return_loan(dataSeq, infoSeq);
+                            }
+                            catch (DDS.Retcode_NoData)
+                            {
+                                subject.OnCompleted();
+                                return;
+                            }
+                            catch (Exception ex)
+                            {
+                                subject.OnError(ex);
+                                Console.WriteLine("ObservableTopicWaitSet: take error {0}", ex);
+                            }
+                        }
+                        else
+                        {
+                            printStatusKind((int) triggeredmask);
+                            if((triggeredmask & 
+                               (DDS.StatusMask) 
+                                DDS.StatusKind.SUBSCRIPTION_MATCHED_STATUS) != 0)
+                            {
+                                DDS.SubscriptionMatchedStatus status = new DDS.SubscriptionMatchedStatus();
+                                reader.get_subscription_matched_status(ref status);
+                                Console.WriteLine("Subscription matched. current_count = {0}", status.current_count);
+                            }
+                            if ((triggeredmask & 
+                                (DDS.StatusMask) 
+                                 DDS.StatusKind.LIVELINESS_CHANGED_STATUS) != 0)
+                            {
+                                DDS.LivelinessChangedStatus status = new DDS.LivelinessChangedStatus();
+                                reader.get_liveliness_changed_status(ref status);
+                                Console.WriteLine("Liveliness changed. alive_count = {0}", status.alive_count);
+                            }
+                            if((triggeredmask & 
+                               (DDS.StatusMask) 
+                                DDS.StatusKind.SAMPLE_LOST_STATUS) != 0)
+                            {
+                                DDS.SampleLostStatus status = new DDS.SampleLostStatus();
+                                reader.get_sample_lost_status(ref status);
+                                Console.WriteLine("Sample lost. Reason = {0}", status.last_reason.ToString());
+                            }
+                            if ((triggeredmask & 
+                                (DDS.StatusMask) 
+                                 DDS.StatusKind.SAMPLE_REJECTED_STATUS) != 0)
+                            {
+                                DDS.SampleRejectedStatus status = new DDS.SampleRejectedStatus();
+                                reader.get_sample_rejected_status(ref status);
+                                Console.WriteLine("Sample Rejected. Reason = {0}", status.last_reason.ToString());
+                            }
+                        }
+                    }
+                }
+            }
+            catch (DDS.Retcode_Timeout)
+            {
+                Console.WriteLine("wait timed out");
+                count += 2;
+                continue;
+            }
+        }
+      }
+
+      public IDisposable Subscribe(IObserver<T> observer)
+      {
+          lock (mutex)
+          {
+              if (subject == null)
+              {
+                  subject = new Subject<T>();
+                  initializeDataReader(participant);
+                  scheduler.Schedule(_ => { receiveData(); });
+              }
+          }
+
+          return subject.Subscribe(observer);
+      }
+
+      private Object mutex;
+      private DDS.DomainParticipant participant;
+      private DDS.DataReader reader;
+      private DDS.StatusCondition status_condition;
+      private DDS.WaitSet waitset;
+      private DDS.Duration_t timeout;
+      private IScheduler scheduler;
+      private string topicName;
+      private string typeName;
+      private ISubject<T, T> subject;
+      private DDS.UserRefSequence<T> dataSeq = new DDS.UserRefSequence<T>();
+      private DDS.SampleInfoSeq infoSeq = new DDS.SampleInfoSeq();
+  };
+
   class ObservableTopic<T> : IObservable<T> where T : class , DDS.ICopyable<T>, new()
   {
-    public ObservableTopic(DDS.DomainParticipant participant,
-                           string topicName,
-                           string typeName,
-                           IScheduler subscribeOnScheduler)
-    {
-      mutex = new Object();
-
-      if (scheduler == null)
-        this.scheduler = Scheduler.Immediate;
-      else
-        this.scheduler = subscribeOnScheduler;
-      
-      if (typeName == null)
-        this.typeName = typeof(T).ToString();
-      else
-        this.typeName = typeName;
-
-      this.participant = participant;
-      this.topicName = topicName;
-
-      if (this.scheduler == null ||
-         this.typeName == null ||
-         this.participant == null ||
-         this.topicName == null)
-        throw new ArgumentNullException("ObservableTopic: Null parameters detected");
-    }
-
-    public void Dispose()
-    {
-      listener.Dispose();
-    }
-    private void initializeDataReader(DDS.DomainParticipant participant)
-    {
-      DDS.Subscriber subscriber = participant.create_subscriber(
-          DDS.DomainParticipant.SUBSCRIBER_QOS_DEFAULT,
-          null /* listener */,
-          DDS.StatusMask.STATUS_MASK_NONE);
-      if (subscriber == null)
+      public ObservableTopic(DDS.DomainParticipant participant,
+                             string topicName,
+                             string typeName,
+                             IScheduler subscribeOnScheduler)
       {
-        throw new ApplicationException("create_subscriber error");
+          mutex = new Object();
+
+          if (scheduler == null)
+              this.scheduler = Scheduler.Immediate;
+          else
+              this.scheduler = subscribeOnScheduler;
+
+          if (typeName == null)
+              this.typeName = typeof(T).ToString();
+          else
+              this.typeName = typeName;
+
+          this.participant = participant;
+          this.topicName = topicName;
+
+          if (this.scheduler == null ||
+             this.typeName == null ||
+             this.participant == null ||
+             this.topicName == null)
+              throw new ArgumentNullException("ObservableTopic: Null parameters detected");
       }
 
-      DDS.Topic topic = participant.create_topic(
-          topicName,
-          typeName,
-          DDS.DomainParticipant.TOPIC_QOS_DEFAULT,
-          null /* listener */,
-          DDS.StatusMask.STATUS_MASK_NONE);
-      if (topic == null)
+      public void Dispose()
       {
-        throw new ApplicationException("create_topic error");
+          listener.Dispose();
+      }
+      private void initializeDataReader(DDS.DomainParticipant participant)
+      {
+          DDS.Subscriber subscriber = participant.create_subscriber(
+              DDS.DomainParticipant.SUBSCRIBER_QOS_DEFAULT,
+              null /* listener */,
+              DDS.StatusMask.STATUS_MASK_NONE);
+          if (subscriber == null)
+          {
+              throw new ApplicationException("create_subscriber error");
+          }
+
+          DDS.Topic topic = participant.create_topic(
+              topicName,
+              typeName,
+              DDS.DomainParticipant.TOPIC_QOS_DEFAULT,
+              null /* listener */,
+              DDS.StatusMask.STATUS_MASK_NONE);
+          if (topic == null)
+          {
+              throw new ApplicationException("create_topic error");
+          }
+
+          listener = new DataReaderListener(subject, scheduler);
+
+          /* To customize the data reader QoS, use 
+           the configuration file USER_QOS_PROFILES.xml */
+          DDS.DataReader reader = subscriber.create_datareader(
+              topic,
+              DDS.Subscriber.DATAREADER_QOS_DEFAULT,
+              listener,
+              DDS.StatusMask.STATUS_MASK_ALL);
+
+          if (reader == null)
+          {
+              listener = null;
+              throw new ApplicationException("create_datareader error");
+          }
       }
 
-      listener = new DataReaderListener(subject, scheduler);
-      
-      /* To customize the data reader QoS, use 
-       the configuration file USER_QOS_PROFILES.xml */
-      DDS.DataReader reader = subscriber.create_datareader(
-          topic,
-          DDS.Subscriber.DATAREADER_QOS_DEFAULT,
-          listener,
-          DDS.StatusMask.STATUS_MASK_ALL);
-     
-      if (reader == null)
+      public IDisposable Subscribe(IObserver<T> observer)
       {
-        listener = null;
-        throw new ApplicationException("create_datareader error");
-      }
-    }
-
-    public IDisposable Subscribe(IObserver<T> observer)
-    {
-      lock (mutex)
-      {
-        if (subject == null)
-        {
-          subject = new Subject<T>();
-          initializeDataReader(participant);
-        }
-      }
-
-      return subject.Subscribe(observer);
-    }
-
-    private class DataReaderListener : DataReaderListenerAdapter
-    {
-      public DataReaderListener(ISubject<T, T> subject, IScheduler scheduler)
-      {
-        this.subject = subject;
-        this.scheduler = scheduler;
-        dataSeq = new DDS.UserRefSequence<T>();
-        infoSeq = new DDS.SampleInfoSeq();
-      }
-
-      public override void on_data_available(DDS.DataReader reader)
-      {
-        try
-        {
-          DDS.TypedDataReader<T> dataReader = (DDS.TypedDataReader<T>) reader;
-
-          dataReader.take(
-              dataSeq,
-              infoSeq,
-              DDS.ResourceLimitsQosPolicy.LENGTH_UNLIMITED,
-              DDS.SampleStateKind.ANY_SAMPLE_STATE,
-              DDS.ViewStateKind.ANY_VIEW_STATE,
-              DDS.InstanceStateKind.ANY_INSTANCE_STATE);
-
-              System.Int32 dataLength = dataSeq.length;
-             
-              for (int i = 0; i < dataLength; ++i)
+          lock (mutex)
+          {
+              if (subject == null)
               {
-                if (infoSeq.get_at(i).valid_data)
-                {
-                  T temp = new T();
-                  temp.copy_from(dataSeq.get_at(i));
-                  subject.OnNext(temp);
-                }
-                else if (infoSeq.get_at(i).instance_state ==
-                          DDS.InstanceStateKind.NOT_ALIVE_DISPOSED_INSTANCE_STATE)
-                {
-                 
-                  /* FIXME: If the instance comes back online, it will break the Rx contract. */
-                  //Console.WriteLine("OnCompleted CALLED FROM LIB CODE on tid "+System.Threading.Thread.CurrentThread.ManagedThreadId);
-                  subject.OnCompleted();
-                }
+                  subject = new Subject<T>();
+                  initializeDataReader(participant);
               }
+          }
 
-              dataReader.return_loan(dataSeq, infoSeq);
-        }
-        catch (DDS.Retcode_NoData)
-        {
-            
-            subject.OnCompleted();
-          return;
-        }
-        catch (Exception ex)
-        {
-          subject.OnError(ex);
-          Console.WriteLine("ObservableTopic: take error {0}", ex);
-        }
+          return subject.Subscribe(observer);
       }
 
-      private DDS.UserRefSequence<T> dataSeq;
-      private DDS.SampleInfoSeq infoSeq;
+      private class DataReaderListener : DataReaderListenerAdapter
+      {
+          public DataReaderListener(ISubject<T, T> subject, IScheduler scheduler)
+          {
+              this.subject = subject;
+              this.scheduler = scheduler;
+              dataSeq = new DDS.UserRefSequence<T>();
+              infoSeq = new DDS.SampleInfoSeq();
+          }
+
+          public override void on_data_available(DDS.DataReader reader)
+          {
+              try
+              {
+                  DDS.TypedDataReader<T> dataReader = (DDS.TypedDataReader<T>)reader;
+
+                  dataReader.take(
+                      dataSeq,
+                      infoSeq,
+                      DDS.ResourceLimitsQosPolicy.LENGTH_UNLIMITED,
+                      DDS.SampleStateKind.ANY_SAMPLE_STATE,
+                      DDS.ViewStateKind.ANY_VIEW_STATE,
+                      DDS.InstanceStateKind.ANY_INSTANCE_STATE);
+
+                  System.Int32 dataLength = dataSeq.length;
+
+                  for (int i = 0; i < dataLength; ++i)
+                  {
+                      if (infoSeq.get_at(i).valid_data)
+                      {
+                          T temp = new T();
+                          temp.copy_from(dataSeq.get_at(i));
+                          subject.OnNext(temp);
+                      }
+                      else if (infoSeq.get_at(i).instance_state ==
+                                DDS.InstanceStateKind.NOT_ALIVE_DISPOSED_INSTANCE_STATE)
+                      {
+
+                          /* FIXME: If the instance comes back online, it will break the Rx contract. */
+                          //Console.WriteLine("OnCompleted CALLED FROM LIB CODE on tid "+System.Threading.Thread.CurrentThread.ManagedThreadId);
+                          subject.OnCompleted();
+                      }
+                  }
+
+                  dataReader.return_loan(dataSeq, infoSeq);
+              }
+              catch (DDS.Retcode_NoData)
+              {
+
+                  subject.OnCompleted();
+                  return;
+              }
+              catch (Exception ex)
+              {
+                  subject.OnError(ex);
+                  Console.WriteLine("ObservableTopic: take error {0}", ex);
+              }
+          }
+
+          private DDS.UserRefSequence<T> dataSeq;
+          private DDS.SampleInfoSeq infoSeq;
+          private ISubject<T, T> subject;
+          private IScheduler scheduler;
+      }
+
+      private Object mutex;
+      private DDS.DomainParticipant participant;
+      private string topicName;
+      private string typeName;
+      private DataReaderListener listener;
       private ISubject<T, T> subject;
       private IScheduler scheduler;
-    }
-
-    private Object mutex;
-    private DDS.DomainParticipant participant;
-    private string topicName;
-    private string typeName;
-    private DataReaderListener listener;
-    private ISubject<T, T> subject;
-    private IScheduler scheduler;
   };
 
   class ObservableKeyedTopic<TKey, T> : IObservable<IGroupedObservable<TKey, T>>
@@ -1037,17 +1326,27 @@ namespace RTI.RxDDS
 
   public static class DDSObservable
   {
-    public static IObservable<T> FromTopic<T>(DDS.DomainParticipant participant,
-                                              string topicName,
-                                              IScheduler subscribeOnScheduler = null)
-        where T : class , DDS.ICopyable<T>, new()
-    {
-      var ddsObservable = new ObservableTopic<T>(participant, topicName, null, Scheduler.Immediate);
-      if (subscribeOnScheduler == null)
-        return ddsObservable;
-      else
-        return ddsObservable.SubscribeOn(subscribeOnScheduler);
-    }
+      public static IObservable<T> FromTopicWaitSet<T>(DDS.DomainParticipant participant,
+                                                       string topicName,
+                                                       DDS.Duration_t timeout)
+          where T : class , DDS.ICopyable<T>, new()
+      {
+          string type_name = null;
+          var ddsObservable = new ObservableTopicWaitSet<T>(participant, topicName, type_name, timeout);
+          return ddsObservable;
+      }
+      
+      public static IObservable<T> FromTopic<T>(DDS.DomainParticipant participant,
+                                         string topicName,
+                                         IScheduler subscribeOnScheduler = null)
+          where T : class , DDS.ICopyable<T>, new()
+      {
+          var ddsObservable = new ObservableTopic<T>(participant, topicName, null, Scheduler.Immediate);
+          if (subscribeOnScheduler == null)
+              return ddsObservable;
+          else
+              return ddsObservable.SubscribeOn(subscribeOnScheduler);
+      }
 
     public static IObservable<T> FromTopic<T>(DDS.DomainParticipant participant,
                                               string topicName,

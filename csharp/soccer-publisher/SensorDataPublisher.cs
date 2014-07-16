@@ -61,6 +61,58 @@ namespace soccer_publisher
         return false;
    }
 
+    static int myParseInt32(string line, ref int pos)
+    {
+        int length = line.Length;
+        int num = 0;
+        bool neg = false;
+        int i = pos;
+        for (; i < length; ++i)
+        {
+            if (line[i] == ' ')
+                continue;
+            else if (line[i] == ',')
+                break;
+            else if (line[i] == '-')
+                neg = true;
+            else
+            {
+                num = num * 10 + ((int)line[i]) - 48;
+            }
+        }
+        pos = ++i;
+        if (neg)
+            return -num;
+        else
+            return num;
+    }
+
+    static long myParseLong(string line, ref int pos)
+    {
+        int length = line.Length;
+        long num = 0;
+        bool neg = false;
+        int i = pos;
+        for (; i < length; ++i)
+        {
+            if (line[i] == ' ')
+                continue;
+            else if (line[i] == ',')
+                break;
+            else if (line[i] == '-')
+                neg = true;
+            else
+            {
+                num = num * 10 + ((int)line[i]) - 48;
+            }
+        }
+        pos = ++i;
+        if (neg)
+            return -num;
+        else
+            return num;
+    }
+
     static void publish(int domain_id, String file_name)
     {
         // --- Create participant --- //
@@ -150,11 +202,10 @@ namespace soccer_publisher
         DDS.InstanceHandle_t instance_handle = DDS.InstanceHandle_t.HANDLE_NIL;
 
         //wait for all data-readers to join before publishing: 
-        while (!wait_for_readers(writer, no_dr))
-        { }
+        while (!wait_for_readers(writer, no_dr)) { }
         System.Threading.Thread.Sleep(1000);
         Console.WriteLine("datareaders have connected. starting to publish");
-
+        bool myparse = true;
         /* Main loop */
         using (StreamReader sReader = new StreamReader(file_name))                
         {          
@@ -169,25 +220,63 @@ namespace soccer_publisher
               try
               {
                 linesRead++;
-                String[] fields = line.Split(',');            
-                
-                instance.sensor_id = Int32.Parse(fields[0]);
-                if(ballSensors.Contains(instance.sensor_id))
-                  continue;
+                if (myparse)
+                {
+                    int pos = 0;
+                    instance.sensor_id = myParseInt32(line, ref pos);
+                    //if (ballSensors.Contains(instance.sensor_id))
+                    //    continue;
+                    instance.ts        = myParseLong(line,  ref pos);
+                    instance.pos_x     = myParseInt32(line, ref pos);
+                    instance.pos_y     = myParseInt32(line, ref pos);
+                    instance.pos_z     = myParseInt32(line, ref pos);
+                    instance.vel       = myParseInt32(line, ref pos);
+                    instance.accel     = myParseInt32(line, ref pos);
+                    instance.vel_x     = myParseInt32(line, ref pos);
+                    instance.vel_y     = myParseInt32(line, ref pos);
+                    instance.vel_z     = myParseInt32(line, ref pos);
+                    instance.accel_x   = myParseInt32(line, ref pos);
+                    instance.accel_y   = myParseInt32(line, ref pos);
+                    instance.accel_z   = myParseInt32(line, ref pos);
 
-                instance.ts        = Int64.Parse(fields[1]);
-                instance.pos_x     = Int32.Parse(fields[2]);
-                instance.pos_y     = Int32.Parse(fields[3]);
-                instance.pos_z     = Int32.Parse(fields[4]);
-                instance.vel       = Int32.Parse(fields[5]);
-                instance.accel     = Int32.Parse(fields[6]);
-                instance.vel_x     = Int32.Parse(fields[7]);
-                instance.vel_y     = Int32.Parse(fields[8]);
-                instance.vel_z     = Int32.Parse(fields[9]);
-                instance.accel_x   = Int32.Parse(fields[10]);
-                instance.accel_y   = Int32.Parse(fields[11]);
-                instance.accel_z   = Int32.Parse(fields[12]);
+                    /*
+                    Console.WriteLine("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12}",
+                        instance.sensor_id,
+                        instance.ts,
+                        instance.pos_x,
+                        instance.pos_y,
+                        instance.pos_z,
+                        instance.vel,
+                        instance.accel,
+                        instance.vel_x,
+                        instance.vel_y,
+                        instance.vel_z,
+                        instance.accel_x,
+                        instance.accel_y,
+                        instance.accel_z);
+                     */
+                }
+                else
+                {
+                    String[] fields = line.Split(',');
 
+                    instance.sensor_id = Int32.Parse(fields[0]);
+                    if (ballSensors.Contains(instance.sensor_id))
+                        continue;
+
+                    instance.ts = Int64.Parse(fields[1]);
+                    instance.pos_x = Int32.Parse(fields[2]);
+                    instance.pos_y = Int32.Parse(fields[3]);
+                    instance.pos_z = Int32.Parse(fields[4]);
+                    instance.vel = Int32.Parse(fields[5]);
+                    instance.accel = Int32.Parse(fields[6]);
+                    instance.vel_x = Int32.Parse(fields[7]);
+                    instance.vel_y = Int32.Parse(fields[8]);
+                    instance.vel_z = Int32.Parse(fields[9]);
+                    instance.accel_x = Int32.Parse(fields[10]);
+                    instance.accel_y = Int32.Parse(fields[11]);
+                    instance.accel_z = Int32.Parse(fields[12]);
+                }
                 count++;
                 SensorData_writer.write(instance, ref instance_handle);
                 if (count % calculation_point == 0)
@@ -220,8 +309,14 @@ namespace soccer_publisher
                   Console.WriteLine("write error {0}", e);
               }
 
-              if((target_rate != 0) && (count % 100==0))
-                  System.Threading.Thread.Sleep(1000*100/target_rate*90/100);
+              if ((target_rate != 0) && (count % 1000 == 0))
+              {
+                  //double calib = 0.7;
+                  //if(calibrationDict.ContainsKey(target_rate))
+                  //    calib = calibrationDict[target_rate];
+                  
+                  System.Threading.Thread.Sleep(1000 * 1000 / target_rate * 30/100);
+              }
             }
             end_ticks = publication_sw.ElapsedTicks;
             publication_sw.Stop();
@@ -292,6 +387,10 @@ namespace soccer_publisher
     private static long calculation_point = 100000;
     private static int target_rate = 2000; // samples/sec
     private static int max_samples = 100000;
+    private static Dictionary<int, double> calibrationDict =
+        new Dictionary<int, double> { { 100000, 0.8 }, 
+                                      { 150000, 0.5 },
+                                      { 200000, 0.3} };
 }
 
 }

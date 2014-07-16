@@ -161,7 +161,9 @@ public class Processor
         else if (args[1] == "key_correlator_dynamic")
           disposable = proc.key_correlator_dynamic(participant, scheduler);
         else if (args[1] == "once")
-          disposable = proc.once(participant);
+            disposable = proc.once(participant);
+        else if (args[1] == "join")
+            disposable = proc.join(participant);
         else if (args[1] == "groupJoinInfiniteInner")
           disposable = proc.groupJoinInfiniteInner();
       }
@@ -224,8 +226,12 @@ public class Processor
   /* forward_shortest */
   IDisposable demo3(DDS.DomainParticipant participant)
   {
+    DDS.Duration_t timeout;
+    timeout.nanosec = 0;
+    timeout.sec = 10;
+
     return DDSObservable
-            .FromTopic<ShapeTypeExtended>(participant, "Square")
+            .FromTopicWaitSet<ShapeTypeExtended>(participant, "Square", timeout)
             .Do(_ => Console.WriteLine("ThreadId = {0}", System.Threading.Thread.CurrentThread.ManagedThreadId))
             .OnDataAvailable(triangle_writer);
   }
@@ -1119,11 +1125,69 @@ public class Processor
 
   IDisposable once(DDS.DomainParticipant participant)
   {
-    return Observable
-            .Timer(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1))
-            .Once(10)
-            .Once(() => 20)
-            .Subscribe(Console.WriteLine);
+      return Observable
+              .Timer(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1))
+              .Once(10)
+              .Once(() => 20)
+              .Subscribe(Console.WriteLine);
+  }
+
+  IDisposable join(DDS.DomainParticipant participant)
+  {
+      var squares =
+          DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square")
+                       .Publish()
+                       .RefCount();
+      var circles =
+          DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Circle")
+                       .Publish()
+                       .RefCount();
+
+      /* Check if the shapes jump more than 1 pixel at a time.*/
+      /* Yes, they do if fast. */
+      
+      ShapeTypeExtended dummy = null;
+      squares.Scan(new 
+                   {
+                         lastx = -1, 
+                         lasty = -1, 
+                         shape = dummy,
+                         largeDiff = false
+                   },
+                   (seed, shape) =>
+                   {
+                       return new {
+                         lastx = shape.x,
+                         lasty = shape.y,
+                         shape = shape,
+                         largeDiff = (Math.Abs(seed.lastx - shape.x) > 1) ||
+                                     (Math.Abs(seed.lasty - shape.y) > 1)
+                       };
+                   })
+             .Where(obj => obj.largeDiff)
+             .Subscribe(obj =>
+                   {
+                        Console.WriteLine("{0} {1}", obj.shape.x, obj.shape.y);
+                   });
+      
+      return squares.ObserveOn(Scheduler.Default)
+                    .Join(circles, 
+                          _ => squares, 
+                          _ => circles,
+                          (square, circle) => new { 
+                              sq = square, 
+                              cr = circle
+                          })
+                    .Where(obj => (obj.sq.x == obj.cr.x) || 
+                                  (obj.sq.y == obj.cr.y))
+                    .Select(obj => new ShapeTypeExtended
+                          {
+                              x = obj.sq.x,
+                              y = obj.sq.y,
+                              color = "GREEN",
+                              shapesize = 15
+                          })
+                    .Subscribe(triangle_writer);
   }
 
   public static IEnumerable<int> Numbers()

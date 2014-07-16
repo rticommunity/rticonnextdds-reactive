@@ -117,15 +117,20 @@ RTI Connext user manual.
               <max_samples>LENGTH_UNLIMITED</max_samples>
               <max_samples_per_instance>LENGTH_UNLIMITED</max_samples_per_instance>
               <initial_instances>38</initial_instances>
-              <initial_samples>1000</initial_samples>
+              <initial_samples>100000</initial_samples>
             </resource_limits>
+            <reader_resource_limits>
+              <max_samples_per_read>20000</max_samples_per_read>
+            </reader_resource_limits>
           </datareader_qos>
         
           <datawriter_qos>
             <resource_limits>
               <max_instances>100</max_instances>
-              <max_samples>LENGTH_UNLIMITED</max_samples>
-              <max_samples_per_instance>LENGTH_UNLIMITED</max_samples_per_instance>
+              <!--max_samples>LENGTH_UNLIMITED</max_samples>
+              <max_samples_per_instance>LENGTH_UNLIMITED</max_samples_per_instance-->
+              <max_samples>1000000</max_samples>
+              <max_samples_per_instance>1000000</max_samples_per_instance>
               <initial_instances>38</initial_instances>
               <initial_samples>100000</initial_samples>
             </resource_limits>
