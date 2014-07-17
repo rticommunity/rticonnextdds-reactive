@@ -98,9 +98,26 @@ namespace Queries
                 timeout.nanosec = 0;
                 timeout.sec = 10;
 
+                /*var dict =
+                    MetaData.PLAYER_MAP
+                        .SelectMany((KeyValuePair<string, List<int>> keyValue, int index) =>
+                         {
+                             return keyValue.Value;
+                         })
+                        .ToDictionary(sensor_id => sensor_id,
+                                      sensor_id => new DDSKeyedSubject<int, SensorData>(sensor_id));
+                */
                 IObservable<SensorData> rawSensorStream = DDSObservable
-                    .FromTopicWaitSet<SensorData>(participant, "Raw SensorData", timeout);            
-                
+                    .FromTopicWaitSet<SensorData>(participant, "Raw SensorData", timeout);
+
+                /*IObservable<IGroupedObservable<int, SensorData>> rawSensorStream = DDSObservable
+                    .FromKeyedTopicWaitSet<int, SensorData>(
+                            participant,
+                            "Raw SensorData",
+                            (sensor) => sensor.sensor_id,
+                            dict, 
+                            timeout);*/
+
                 //used to keep track of number of output samples produced from a query. 
                 int output_count = 0;
 
@@ -117,6 +134,7 @@ namespace Queries
                 var countedStream = 
                   rawSensorStream.Do(data => ++input_count)
                                  .Publish();
+                
                 
                 //query-1 AverageProcessor               
                 /*disposable= countedStream
@@ -146,6 +164,7 @@ namespace Queries
                 
                 //Query-1 AggregateRunningProcessor
                 disposable= countedStream.Average()
+                //disposable = AverageProcessor.Average(dict)
                                          .CurrentRunningAnalysis()
                                          .FullGameAggregateRunningDataAnalysis()
                                          .Merge()
@@ -172,6 +191,7 @@ namespace Queries
                 //disposable= countedStream.shotOnGoalProcessor(ref eventInfoStream).Subscribe(prog.mshotOnGoalDataWriter);
 
                 countedStream.Connect();
+                //rawSensorStream.Subscribe();
                 Console.ReadLine();           
                
 

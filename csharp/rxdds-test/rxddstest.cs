@@ -697,8 +697,11 @@ public class Processor
 
   IDisposable instance_forward(DDS.DomainParticipant participant)
   {
-    return DDSObservable.FromKeyedTopic<string, ShapeTypeExtended>
-            (participant, "Square", shape => shape.color)
+    DDS.Duration_t timeout = new DDS.Duration_t();
+    timeout.nanosec = 0;
+    timeout.sec = 10;
+    return DDSObservable.FromKeyedTopicWaitSet<string, ShapeTypeExtended>
+            (participant, "Square", shape => shape.color, timeout)
                   .Subscribe(dds_instance =>
                   {
                     ShapeTypeExtended key = new ShapeTypeExtended { color = dds_instance.Key };

@@ -139,6 +139,31 @@ namespace Average
             return computePlayerData(src);
         }
 
+        public static IEnumerable<IObservable<PlayerData>> Average(Dictionary<int, DDSKeyedSubject<int, SensorData>> dict)
+        {
+            return 
+              MetaData
+              .PLAYER_MAP
+              .Select((KeyValuePair<string, List<int>> keyValue, int index) =>
+              {
+                var pt = PerformanceTest.ptArray[index];
+                var sensorList = keyValue.Value; //The list of sensors attached to this player               
+                var sensorStreamList = 
+                      sensorList.Select((int sensor_id) =>
+                                           {
+                                             return dict[sensor_id]
+                                                       .Once(MetaData.getDefaultSensorDataWithSensorID(sensor_id));
+                                           });
+                return 
+                  Observable
+                    .Zip(sensorStreamList)
+                    .DoIf(() => PerformanceTest.AvgProcessorStatus, d => pt.recordTime())
+                    .Select(returnPlayerData)
+                    .Where(data => !String.IsNullOrEmpty(data.player_name))
+                    .DoIf(() => PerformanceTest.AvgProcessorStatus, d => pt.computeMetrics());
+          });
+        }
+
     }   
 
 }
