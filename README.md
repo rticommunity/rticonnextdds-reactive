@@ -5,6 +5,8 @@ Rx4DDS
 
 - [Rx4DDS.NET Announcement](http://blogs.rti.com/2014/04/09/reactive-programming-using-rx4dds/)
 - Research paper on [Scalable Reactive Stream Processing Using DDS and Rx](http://community.rti.com/paper/scalable-reactive-stream-processing-using-dds-and-rx) 
+- Reactive Stream Processing using DDS and Rx ([presentation](http://www.slideshare.net/SumantTambe/reactive-stream-processing-using-dds-and-rx))
+- 2014 Silicon Valley Code Camp ([video](https://vimeo.com/108753792))
 
 
 ### Windows Build
