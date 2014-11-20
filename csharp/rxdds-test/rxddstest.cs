@@ -838,6 +838,8 @@ public class Processor
 
   IDisposable solarSystem(DDS.DomainParticipant participant)
   {
+      var useLinq = true;
+
       var sunLoc =
           DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
 
@@ -847,24 +849,40 @@ public class Processor
       Func<string, int, int, int, IObservable<ShapeTypeExtended>> planetOrbit
           = (color, size, orbitRadius, daysInYear) =>
           {
-              int degree = 0;
-              return ticks
-                       .SelectMany((long i) =>
-                       {
-                           degree = (int) (i * 365/daysInYear);
-                           return
-                               sunLoc
-                               .Select(shape =>
-                               {
-                                   return new ShapeTypeExtended
+              if (useLinq)
+              {
+                  return from t in ticks
+                         from sun in sunLoc.Take(1)
+                         let degree = (int)(t * 365 / daysInYear)
+                         select new ShapeTypeExtended
+                         {
+                             x = sun.x + (int)(orbitRadius * Math.Cos(degree * Math.PI / 180)),
+                             y = sun.y + (int)(orbitRadius * Math.Sin(degree * Math.PI / 180)),
+                             color = color,
+                             shapesize = size
+                         };
+              }
+              else
+              {
+                  int degree = 0;
+                  return ticks
+                           .SelectMany((long i) =>
+                           {
+                               degree = (int)(i * 365 / daysInYear);
+                               return
+                                   sunLoc
+                                   .Select(shape =>
                                    {
-                                       x = shape.x + (int)(orbitRadius * Math.Cos(degree * Math.PI / 180)),
-                                       y = shape.y + (int)(orbitRadius * Math.Sin(degree * Math.PI / 180)),
-                                       color = color,
-                                       shapesize = size
-                                   };
-                               }).Take(1);
-                       });
+                                       return new ShapeTypeExtended
+                                       {
+                                           x = shape.x + (int)(orbitRadius * Math.Cos(degree * Math.PI / 180)),
+                                           y = shape.y + (int)(orbitRadius * Math.Sin(degree * Math.PI / 180)),
+                                           color = color,
+                                           shapesize = size
+                                       };
+                                   }).Take(1);
+                           });
+              }
           };
 
       int mercuryRadius = 30,  mercurySize  = 8,  mercuryYear = 88;
