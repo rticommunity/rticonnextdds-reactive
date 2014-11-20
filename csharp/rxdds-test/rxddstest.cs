@@ -62,6 +62,9 @@ public class Processor
       proc.triangle_writer =
         DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Triangle");
 
+      proc.circle_writer =
+        DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Circle");
+
       IDisposable disposable = null;
 
       //int workerThreads, completionPortThreads;
@@ -164,8 +167,16 @@ public class Processor
             disposable = proc.once(participant);
         else if (args[1] == "join")
             disposable = proc.join(participant);
+        else if (args[1] == "orbit")
+            disposable = proc.orbit(participant);
+        else if (args[1] == "orbitSquare")
+            disposable = proc.orbitSquare(participant);
+        else if (args[1] == "orbitTwo")
+            disposable = proc.orbitTwo(participant);
+        else if (args[1] == "solarSystem")
+            disposable = proc.solarSystem(participant);
         else if (args[1] == "groupJoinInfiniteInner")
-          disposable = proc.groupJoinInfiniteInner();
+            disposable = proc.groupJoinInfiniteInner();
       }
 
       for (; disposable != null; )
@@ -199,7 +210,6 @@ public class Processor
     IDisposable disposable =
         rx_reader.OnDataAvailable((ShapeTypeExtended shape) =>
         {
-          Console.WriteLine("demo1: ThreadId = {0}", System.Threading.Thread.CurrentThread.ManagedThreadId);
           DDS.InstanceHandle_t handle = DDS.InstanceHandle_t.HANDLE_NIL;
           triangle_writer.write(shape, ref handle);
         });
@@ -214,10 +224,8 @@ public class Processor
     return
     DDSObservable
         .FromTopic<ShapeTypeExtended>(participant, "Square")
-        .ObserveOn(scheduler)
-        .OnDataAvailable((ShapeTypeExtended shape) =>
+        .Subscribe((ShapeTypeExtended shape) =>
         {
-          Console.WriteLine("demo2: ThreadId = {0}", System.Threading.Thread.CurrentThread.ManagedThreadId);
           DDS.InstanceHandle_t handle = DDS.InstanceHandle_t.HANDLE_NIL;
           triangle_writer.write(shape, ref handle);
         });
@@ -232,8 +240,7 @@ public class Processor
 
     return DDSObservable
             .FromTopicWaitSet<ShapeTypeExtended>(participant, "Square", timeout)
-            .Do(_ => Console.WriteLine("ThreadId = {0}", System.Threading.Thread.CurrentThread.ManagedThreadId))
-            .OnDataAvailable(triangle_writer);
+            .Subscribe(triangle_writer);
   }
 
   /* swap */
@@ -349,7 +356,7 @@ public class Processor
     long WINDOW_SIZE = 50;
     long HISTORY_SIZE = 20;
 
-    circle_writer = DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Circle");
+    //circle_writer = DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Circle");
     var rx_square_reader =
         DDSObservable.FromKeyedTopic<string, ShapeTypeExtended>(
             participant, "Square", shape => shape.color);
@@ -403,7 +410,7 @@ public class Processor
 
   IDisposable splitterDelayNAverage(DDS.DomainParticipant participant)
   {
-    circle_writer = DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Circle");
+    //circle_writer = DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Circle");
 
     var rx_square_reader =
         DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square");
@@ -713,27 +720,189 @@ public class Processor
 
   IDisposable flower(DDS.DomainParticipant participant)
   {
-    int a = 30, b = 30, c = 10;
+      int a = 30, b = 30, c = 10;
 
-    return Observable.Interval(TimeSpan.FromMilliseconds(1), Scheduler.Immediate)
-                     .Select((long x) =>
-                     {
-                       int angle = (int)(x % 360);
-                       return new ShapeTypeExtended
+      return Observable.Interval(TimeSpan.FromMilliseconds(1), Scheduler.Immediate)
+                       .Select((long x) =>
                        {
-                         x = (int)(120 + (a + b) * Math.Cos(angle) + b * Math.Cos((a / b - c) * angle)),
-                         y = (int)(120 + (a + b) * Math.Sin(angle) + b * Math.Sin((a / b - c) * angle)),
-                         color = "GREEN",
-                         shapesize = 5
-                       };
-                     })
-                     .Do((ShapeTypeExtended shape, long idx) =>
-                     {
-                       if (idx % 1000 == 0)
-                         Console.WriteLine("{0} {1}", idx, DateTime.Now);
-                     })
-                     .SubscribeOn(Scheduler.Default)
-                     .Subscribe(triangle_writer);
+                           int angle = (int)(x % 360);
+                           return new ShapeTypeExtended
+                           {
+                               x = (int)(120 + (a + b) * Math.Cos(angle) + b * Math.Cos((a / b - c) * angle)),
+                               y = (int)(120 + (a + b) * Math.Sin(angle) + b * Math.Sin((a / b - c) * angle)),
+                               color = "GREEN",
+                               shapesize = 5
+                           };
+                       })
+                       .Subscribe(triangle_writer);
+  }
+
+  IDisposable orbit(DDS.DomainParticipant participant)
+  {
+      int radius = 40, a = 100, b = 100;
+
+      var rx_square_reader
+          = DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
+
+      return Observable.Interval(TimeSpan.FromMilliseconds(3), Scheduler.Immediate)
+                       .Select((long i) =>
+                       {
+                           int angle = (int)(i % 360);
+                            return new ShapeTypeExtended
+                            {
+                                x = a + (int)(radius * Math.Cos(angle * Math.PI / 180)),
+                                y = b + (int)(radius * Math.Sin(angle * Math.PI / 180)),
+                                color = "RED",
+                                shapesize = 10
+                            };
+                       })
+                       .Subscribe(circle_writer);
+  }
+
+  IDisposable orbitSquare(DDS.DomainParticipant participant)
+  {
+      int radius = 40;
+
+      var rx_square_reader
+          = DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
+
+      return Observable.Interval(TimeSpan.FromMilliseconds(3), Scheduler.Immediate)
+                       .SelectMany((long i) =>
+                       {
+                           int angle = (int)(i % 360);
+                           return
+                               rx_square_reader
+                               .Select(shape =>
+                               {
+                                   return new ShapeTypeExtended
+                                   {
+                                       x = shape.x + (int)(radius * Math.Cos(angle * Math.PI / 180)),
+                                       y = shape.y + (int)(radius * Math.Sin(angle * Math.PI / 180)),
+                                       color = "RED",
+                                       shapesize = 10
+                                   };
+                               }).Take(1);
+                       })
+                       .Subscribe(circle_writer);
+  }
+
+  IDisposable orbitTwo(DDS.DomainParticipant participant)
+  {
+      int circle_radius = 60;
+      int triangle_radius = 30;
+
+      var rx_square_reader
+          = DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
+
+      var circle_orbit =
+          Observable.Interval(TimeSpan.FromMilliseconds(8), new EventLoopScheduler())
+                       .SelectMany((long i) =>
+                       {
+                           int degree = (int)(i % 360);
+                           return
+                               rx_square_reader
+                               .Select(shape =>
+                               {
+                                   return new ShapeTypeExtended
+                                   {
+                                       x = shape.x + (int)(circle_radius * Math.Cos(degree * Math.PI / 180)),
+                                       y = shape.y + (int)(circle_radius * Math.Sin(degree * Math.PI / 180)),
+                                       color = "RED",
+                                       shapesize = 15
+                                   };
+                               }).Take(1);
+                       });
+
+      int angle = 0;
+      var triangle_orbit
+          = circle_orbit
+                .Select(shape =>
+                {
+                    angle += 3;
+                    if (angle >= 360)
+                        angle = 0;
+                    return new ShapeTypeExtended
+                    {
+                        x = shape.x + (int)(triangle_radius * Math.Cos(angle * Math.PI / 180)),
+                        y = shape.y + (int)(triangle_radius * Math.Sin(angle * Math.PI / 180)),
+                        color = "YELLOW",
+                        shapesize = 10
+                    };
+                });
+
+      return new CompositeDisposable(new IDisposable[] { 
+          triangle_orbit.Subscribe(triangle_writer),
+          circle_orbit.Subscribe(circle_writer)
+      });
+  }
+
+  IDisposable solarSystem(DDS.DomainParticipant participant)
+  {
+      var sunLoc =
+          DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
+
+      var ticks =
+        Observable.Interval(TimeSpan.FromMilliseconds(30), new EventLoopScheduler());
+
+      Func<string, int, int, int, IObservable<ShapeTypeExtended>> planetOrbit
+          = (color, size, orbitRadius, daysInYear) =>
+          {
+              int degree = 0;
+              return ticks
+                       .SelectMany((long i) =>
+                       {
+                           degree = (int) (i * 365/daysInYear);
+                           return
+                               sunLoc
+                               .Select(shape =>
+                               {
+                                   return new ShapeTypeExtended
+                                   {
+                                       x = shape.x + (int)(orbitRadius * Math.Cos(degree * Math.PI / 180)),
+                                       y = shape.y + (int)(orbitRadius * Math.Sin(degree * Math.PI / 180)),
+                                       color = color,
+                                       shapesize = size
+                                   };
+                               }).Take(1);
+                       });
+          };
+
+      int mercuryRadius = 30,  mercurySize  = 8,  mercuryYear = 88;
+      int venusRadius   = 50,  venusSize    = 15, venusYear   = 225;
+      int earthRadius   = 70,  earthSize    = 17, earthYear   = 365;
+      int marsRadius    = 90,  marsSize     = 12, marsYear    = 686;
+      int jupiterRadius = 120, jupiterSize  = 30, jupiterYear = 4329;
+      int moonRadius    = 20,  moonSize     = 8;
+
+      var mercuryLoc = planetOrbit("RED",    mercurySize, mercuryRadius, mercuryYear);
+      var venusLoc   = planetOrbit("YELLOW", venusSize,   venusRadius,   venusYear);
+      var earthLoc   = planetOrbit("BLUE",   earthSize,   earthRadius,   earthYear);
+      var marsLoc    = planetOrbit("ORANGE", marsSize,    marsRadius,    marsYear);
+      var jupiterLoc = planetOrbit("CYAN",   jupiterSize, jupiterRadius, jupiterYear);
+
+      int angle = 0;
+      var moonLoc
+          = earthLoc
+                .Select(shape =>
+                {
+                    angle += 3;
+                    return new ShapeTypeExtended
+                    {
+                        x = shape.x + (int)(moonRadius * Math.Cos(angle * Math.PI / 180)),
+                        y = shape.y + (int)(moonRadius * Math.Sin(angle * Math.PI / 180)),
+                        color = "GREEN",
+                        shapesize = moonSize
+                    };
+                });
+      
+      return new CompositeDisposable(new IDisposable[] { 
+          mercuryLoc.Subscribe(circle_writer),
+          venusLoc.Subscribe(circle_writer),
+          earthLoc.Subscribe(circle_writer),
+          marsLoc.Subscribe(circle_writer),
+          jupiterLoc.Subscribe(circle_writer),
+          moonLoc.Subscribe(triangle_writer)
+      });
   }
 
   double distance(int x1, int y1, int x2, int y2)
