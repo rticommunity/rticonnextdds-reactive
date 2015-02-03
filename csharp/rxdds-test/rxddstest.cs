@@ -838,8 +838,6 @@ public class Processor
 
   IDisposable solarSystem(DDS.DomainParticipant participant)
   {
-      var useLinq = true;
-
       var sunLoc =
           DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
 
@@ -849,6 +847,7 @@ public class Processor
       Func<string, int, int, int, IObservable<ShapeTypeExtended>> planetOrbit
           = (color, size, orbitRadius, daysInYear) =>
           {
+              var useLinq = true;
               if (useLinq)
               {
                   return from t in ticks
