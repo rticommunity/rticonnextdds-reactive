@@ -98,7 +98,7 @@ namespace solar
         }        
 
         ShapeTypeExtended planetLocation(ShapeTypeExtended sunLoc, 
-                                         long degree, 
+                                         double degree, 
                                          string planetName)
         {
             return new ShapeTypeExtended
@@ -145,7 +145,7 @@ namespace solar
             var jupiterOrbit = planetOrbit(ticks, sunOrbit, "Jupiter");
 
             // The Moon was born here!
-            long degree = 0;
+            double degree = 0;
             var moonOrbit
                 = earthOrbit.Select(earthLoc =>
                               {

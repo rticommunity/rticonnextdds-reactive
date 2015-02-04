@@ -25,16 +25,16 @@ public class Processor
 {
 
   private ShapeTypeExtended[] test_shape_vals = new ShapeTypeExtended[10] {
-          new ShapeTypeExtended { x = 1,  y = 1,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 2,  y = 2,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 3,  y = 3,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 4,  y = 4,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 5,  y = 5,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 6,  y = 6,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 7,  y = 7,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 8,  y = 8,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 9,  y = 9,  color="BLUE", shapesize = 30  },
-          new ShapeTypeExtended { x = 10, y = 10, color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 50,  y = 50,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 51,  y = 51,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 52,  y = 52,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 53,  y = 53,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 54,  y = 54,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 55,  y = 55,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 56,  y = 56,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 57,  y = 57,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 58,  y = 58,  color="BLUE", shapesize = 30  },
+          new ShapeTypeExtended { x = 59,  y = 59,  color="BLUE", shapesize = 30  },
         };
 
   public static void Main(string[] args)
@@ -175,6 +175,8 @@ public class Processor
             disposable = proc.orbitTwo(participant);
         else if (args[1] == "solarSystem")
             disposable = proc.solarSystem(participant);
+        else if (args[1] == "shapewriter")
+            disposable = proc.shapewriter(participant);
         else if (args[1] == "groupJoinInfiniteInner")
             disposable = proc.groupJoinInfiniteInner();
       }
@@ -836,18 +838,40 @@ public class Processor
       });
   }
 
+  IDisposable shapewriter(DDS.DomainParticipant participant)
+  {
+      var square_writer =
+          DefaultParticipant.CreateDataWriter<ShapeTypeExtended>("Square");
+
+      for (int i = 0; i < test_shape_vals.Length; ++i)
+      {
+          Console.WriteLine("Press Enter to write Square.");
+          ConsoleKeyInfo info = Console.ReadKey(true);
+          if (info.Key == ConsoleKey.Enter)
+          {
+              DDS.InstanceHandle_t handle = DDS.InstanceHandle_t.HANDLE_NIL;
+              var shape = test_shape_vals[i];
+              square_writer.write(shape, ref handle);
+              Console.WriteLine("x = {0}, y = {0}", shape.x, shape.y);
+          }
+      }
+
+
+      return Disposable.Create(() => {});
+  }
+
   IDisposable solarSystem(DDS.DomainParticipant participant)
   {
       var sunLoc =
           DDSObservable.FromTopic<ShapeTypeExtended>(participant, "Square", Scheduler.Default);
 
       var ticks =
-        Observable.Interval(TimeSpan.FromMilliseconds(30), new EventLoopScheduler());
+        Observable.Interval(TimeSpan.FromMilliseconds(25), new EventLoopScheduler());
 
       Func<string, int, int, int, IObservable<ShapeTypeExtended>> planetOrbit
           = (color, size, orbitRadius, daysInYear) =>
           {
-              var useLinq = true;
+              var useLinq = false;
               if (useLinq)
               {
                   return from t in ticks
@@ -863,15 +887,17 @@ public class Processor
               }
               else
               {
-                  int degree = 0;
+                  double degree = 0;
                   return ticks
                            .SelectMany((long i) =>
                            {
-                               degree = (int)(i * 365 / daysInYear);
+                               degree = (double)i * 365 / daysInYear;
                                return
                                    sunLoc
+                                   .Take(1)
                                    .Select(shape =>
                                    {
+                                       Console.WriteLine("i = {0}, degree = {1}, x = {2}, y = {3}", i, degree, shape.x, shape.y);
                                        return new ShapeTypeExtended
                                        {
                                            x = shape.x + (int)(orbitRadius * Math.Cos(degree * Math.PI / 180)),
@@ -879,7 +905,7 @@ public class Processor
                                            color = color,
                                            shapesize = size
                                        };
-                                   }).Take(1);
+                                   });
                            });
               }
           };
@@ -891,11 +917,11 @@ public class Processor
       int jupiterRadius = 120, jupiterSize  = 30, jupiterYear = 4329;
       int moonRadius    = 20,  moonSize     = 8;
 
-      var mercuryLoc = planetOrbit("RED",    mercurySize, mercuryRadius, mercuryYear);
-      var venusLoc   = planetOrbit("YELLOW", venusSize,   venusRadius,   venusYear);
+      //var mercuryLoc = planetOrbit("RED",    mercurySize, mercuryRadius, mercuryYear);
+      //var venusLoc   = planetOrbit("YELLOW", venusSize,   venusRadius,   venusYear);
       var earthLoc   = planetOrbit("BLUE",   earthSize,   earthRadius,   earthYear);
-      var marsLoc    = planetOrbit("ORANGE", marsSize,    marsRadius,    marsYear);
-      var jupiterLoc = planetOrbit("CYAN",   jupiterSize, jupiterRadius, jupiterYear);
+      //var marsLoc    = planetOrbit("ORANGE", marsSize,    marsRadius,    marsYear);
+      //var jupiterLoc = planetOrbit("CYAN",   jupiterSize, jupiterRadius, jupiterYear);
 
       int angle = 0;
       var moonLoc
@@ -913,12 +939,12 @@ public class Processor
                 });
       
       return new CompositeDisposable(new IDisposable[] { 
-          mercuryLoc.Subscribe(circle_writer),
-          venusLoc.Subscribe(circle_writer),
-          earthLoc.Subscribe(circle_writer),
-          marsLoc.Subscribe(circle_writer),
-          jupiterLoc.Subscribe(circle_writer),
-          moonLoc.Subscribe(triangle_writer)
+          //mercuryLoc.Subscribe(circle_writer),
+          //venusLoc.Subscribe(circle_writer),
+          earthLoc.Subscribe(circle_writer)
+          //marsLoc.Subscribe(circle_writer),
+          //jupiterLoc.Subscribe(circle_writer),
+          // moonLoc.Subscribe(triangle_writer)
       });
   }
 
@@ -1404,6 +1430,7 @@ public class Processor
     return Disposable.Empty;
   }
 
+  private DDS.TypedDataWriter<ShapeTypeExtended> square_writer;
   private DDS.TypedDataWriter<ShapeTypeExtended> triangle_writer;
   private DDS.TypedDataWriter<ShapeTypeExtended> circle_writer;
   private DDS.InstanceHandle_t instance_handle = DDS.InstanceHandle_t.HANDLE_NIL;
