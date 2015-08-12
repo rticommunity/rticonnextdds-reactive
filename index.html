@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="description" content="Rx4DDS : Reactive Extensions Adapters for RTI Connext DDS">
+
+    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
+
+    <title>Rx4DDS</title>
+  </head>
+
+  <body>
+
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/rticommunity/rticonnextdds-reactive">View on GitHub</a>
+
+          <h1 id="project_title">Rx4DDS</h1>
+          <h2 id="project_tagline">Reactive Extensions Adapters for RTI Connext DDS</h2>
+
+            <section id="downloads">
+              <a class="zip_download_link" href="https://github.com/rticommunity/rticonnextdds-reactive/zipball/master">Download this project as a .zip file</a>
+              <a class="tar_download_link" href="https://github.com/rticommunity/rticonnextdds-reactive/tarball/master">Download this project as a tar.gz file</a>
+            </section>
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <p><img src="https://rtidds.files.wordpress.com/2014/03/rx3dds.png" alt="Rx4DDS"></p>
+
+<h3>
+<a id="whats-rx4dds" class="anchor" href="#whats-rx4dds" aria-hidden="true"><span class="octicon octicon-link"></span></a>What's Rx4DDS</h3>
+
+<p>Rx4DDS is a research library that integrates Reactive Extensions (Rx) with RTI Connext DDS in C#, JavaScript, and C++11. Rx and DDS are quite complementary because Rx is based on the Observable-Observer pattern, which is analogous to the publish-subscribe pattern of DDS. Furthermore, the core tenet of Rx composition of operations over values that change over time complements DDS instances, which are data objects that change over time. DDS ensures propagation of changes to the interested remote participants. Consequently, combining Rx with DDS enables a coherent end-to-end distributed asynchronous dataflow architecture for both data distribution (which is performed by DDS) and processing (which is done by Rx). Rx and DDS together support location transparency of dataflow-style programs seamlessly. The resulting applications dramatically simplify concurrency to the extent that it can be simply configured.</p>
+
+<h3>
+<a id="status" class="anchor" href="#status" aria-hidden="true"><span class="octicon octicon-link"></span></a>Status</h3>
+
+<p>The C# adapter is more mature than JavaScript and C++. C# codebase also includes an implementation of the DEBS'13 Grand Challenge using DDS and Rx. See <a href="http://www.orgs.ttu.edu/debs2013/index.php?goto=cfchallengedetails">real-time soccer game analytics</a></p>
+
+<h3>
+<a id="further-reading" class="anchor" href="#further-reading" aria-hidden="true"><span class="octicon octicon-link"></span></a>Further Reading</h3>
+
+<ul>
+<li>DEBS'15 Research paper <a href="https://community.rti.com/paper/reactive-stream-processing-data-centric-publishsubscribe">Functional Reactive Stream Processing for Data-centric Publish/Subscribe</a>
+</li>
+<li>DEBS'15 Research paper <a href="https://community.rti.com/presentation/reactive-stream-processing-data-centric-publishsubscribe">presentation</a>
+</li>
+<li>A slightly older research paper <a href="http://community.rti.com/paper/scalable-reactive-stream-processing-using-dds-and-rx">Scalable Reactive Stream Processing Using DDS and Rx</a> </li>
+<li>Silicon Valley Code Camp <a href="http://www.slideshare.net/SumantTambe/reactive-stream-processing-using-dds-and-rx">presentation</a>
+</li>
+<li>Silicon Valley Code Camp <a href="https://vimeo.com/108753792">video</a>
+</li>
+<li>First Rx4DDS.NET <a href="http://blogs.rti.com/2014/04/09/reactive-programming-using-rx4dds/">blogpost</a>
+</li>
+</ul>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+        <p class="copyright">Rx4DDS maintained by <a href="https://github.com/rticommunity">rticommunity</a></p>
+        <p>Published with <a href="https://pages.github.com">GitHub Pages</a></p>
+      </footer>
+    </div>
+
+    
+
+  </body>
+</html>
