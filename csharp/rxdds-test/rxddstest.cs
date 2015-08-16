@@ -254,15 +254,17 @@ public class Processor
     return
     rx_square_reader.Select((ShapeTypeExtended shape) =>
     {
-      return new ShapeTypeExtended
-      {
-        x = shape.y,
-        y = shape.x,
-        color = shape.color,
-        shapesize = shape.shapesize
-      };
-    }).SubscribeAndDisposeOnCompleted(triangle_writer,
-                                    new ShapeTypeExtended { color = "BLUE" });
+        return new ShapeTypeExtended
+        {
+            x = shape.y,
+            y = shape.x,
+            color = shape.color,
+            shapesize = shape.shapesize
+        };
+    })
+    .DisposeAtEnd(triangle_writer,
+                  new ShapeTypeExtended { color = "BLUE" })
+    .Subscribe();
 
   }
 
@@ -302,39 +304,40 @@ public class Processor
         rx_square_reader
         .Subscribe((IGroupedObservable<string, ShapeTypeExtended> square_instance) =>
         {
-          square_instance
-              .ObserveOn(scheduler)
-              .TimeWindowAggregate(
-                  TimeSpan.FromSeconds(2),
-                  new { avgX = 0.0, avgY = 0.0, shape = new ShapeTypeExtended() },
-                  (avg, curVal, expiredList, curCount) =>
-                  {
-                    double totalX = avg.avgX * (curCount + expiredList.Count - 1);
-                    double totalY = avg.avgY * (curCount + expiredList.Count - 1);
-                    totalX += curVal.x;
-                    totalY += curVal.y;
-                    foreach (var ex in expiredList)
+            square_instance
+                .ObserveOn(scheduler)
+                .TimeWindowAggregate(
+                    TimeSpan.FromSeconds(2),
+                    new { avgX = 0.0, avgY = 0.0, shape = new ShapeTypeExtended() },
+                    (avg, curVal, expiredList, curCount) =>
                     {
-                      totalX -= ex.x;
-                      totalY -= ex.y;
-                    }
-                    return new
+                        double totalX = avg.avgX * (curCount + expiredList.Count - 1);
+                        double totalY = avg.avgY * (curCount + expiredList.Count - 1);
+                        totalX += curVal.x;
+                        totalY += curVal.y;
+                        foreach (var ex in expiredList)
+                        {
+                            totalX -= ex.x;
+                            totalY -= ex.y;
+                        }
+                        return new
+                        {
+                            avgX = totalX / curCount,
+                            avgY = totalY / curCount,
+                            shape = curVal
+                        };
+                    })
+                .Select(point =>
+                    new ShapeTypeExtended
                     {
-                      avgX = totalX / curCount,
-                      avgY = totalY / curCount,
-                      shape = curVal
-                    };
-                  })
-              .Select(point =>
-                  new ShapeTypeExtended
-                  {
-                    x = (int)point.avgX,
-                    y = (int)point.avgY,
-                    color = square_instance.Key,
-                    shapesize = point.shape.shapesize
-                  })
-              .SubscribeAndDisposeOnCompleted(triangle_writer,
-                                              new ShapeTypeExtended { color = square_instance.Key });
+                        x = (int)point.avgX,
+                        y = (int)point.avgY,
+                        color = square_instance.Key,
+                        shapesize = point.shape.shapesize
+                    })
+                .DisposeAtEnd(triangle_writer,
+                              new ShapeTypeExtended { color = square_instance.Key })
+                .Subscribe();
         });
   }
 
@@ -370,8 +373,9 @@ public class Processor
                           .Subscribe(square_instance => 
                                      square_instance
                                        .Shift(HISTORY_SIZE)
-                                       .SubscribeAndDisposeOnCompleted(circle_writer,
-                                                    new ShapeTypeExtended { color = square_instance.Key } )),
+                                       .DisposeAtEnd(circle_writer,
+                                                     new ShapeTypeExtended { color = square_instance.Key } )
+                                       .Subscribe()),
                        rx_square_reader
                           .Subscribe(square_instance =>
                               {
@@ -391,21 +395,22 @@ public class Processor
                                     .WindowAggregate(WINDOW_SIZE,
                                                      0.0,
                                                      (avgY, tail, head, count) => (avgY * count + tail - head) / count,
-                                                     (avgY, tail, count, prevCount) => 
-                                                        {
-                                                            if (prevCount > count) tail *= -1;
-                                                            return (avgY * prevCount + tail) / count;
-                                                        }),
+                                                     (avgY, tail, count, prevCount) =>
+                                                     {
+                                                         if (prevCount > count) tail *= -1;
+                                                         return (avgY * prevCount + tail) / count;
+                                                     }),
                                    (square, avgX, avgY) =>
                                        new ShapeTypeExtended
                                        {
-                                           x = (int) avgX,
-                                           y = (int) avgY,
+                                           x = (int)avgX,
+                                           y = (int)avgY,
                                            shapesize = square.shapesize,
                                            color = square.color
                                        })
-                                .SubscribeAndDisposeOnCompleted(triangle_writer, 
-                                                              new ShapeTypeExtended { color = square_instance.Key});
+                                .DisposeAtEnd(triangle_writer,
+                                              new ShapeTypeExtended { color = square_instance.Key })
+                                .Subscribe();
                               })
                     });
   }
@@ -424,7 +429,8 @@ public class Processor
                 new IDisposable[] {
                        rx_square_reader
                           .Shift(MAX_HISTORY)
-                          .SubscribeAndDisposeOnCompleted(circle_writer, new ShapeTypeExtended { color = "BLUE" }),
+                          .DisposeAtEnd(circle_writer, new ShapeTypeExtended { color = "BLUE" })
+                          .Subscribe(),
 
                        rx_square_reader.Zip(
                           rx_square_reader
@@ -700,8 +706,9 @@ public class Processor
                   color = shape.color,
                   shapesize = shape.shapesize
                 })
-                .SubscribeAndDisposeOnCompleted(triangle_writer,
-                                                new ShapeTypeExtended { color = "BLUE" });
+                .DisposeAtEnd(triangle_writer,
+                              new ShapeTypeExtended { color = "BLUE" })
+                .Subscribe();
   }
 
   IDisposable instance_forward(DDS.DomainParticipant participant)
@@ -917,11 +924,11 @@ public class Processor
       int jupiterRadius = 120, jupiterSize  = 30, jupiterYear = 4329;
       int moonRadius    = 20,  moonSize     = 8;
 
-      //var mercuryLoc = planetOrbit("RED",    mercurySize, mercuryRadius, mercuryYear);
-      //var venusLoc   = planetOrbit("YELLOW", venusSize,   venusRadius,   venusYear);
+      var mercuryLoc = planetOrbit("RED",    mercurySize, mercuryRadius, mercuryYear);
+      var venusLoc   = planetOrbit("YELLOW", venusSize,   venusRadius,   venusYear);
       var earthLoc   = planetOrbit("BLUE",   earthSize,   earthRadius,   earthYear);
-      //var marsLoc    = planetOrbit("ORANGE", marsSize,    marsRadius,    marsYear);
-      //var jupiterLoc = planetOrbit("CYAN",   jupiterSize, jupiterRadius, jupiterYear);
+      var marsLoc    = planetOrbit("ORANGE", marsSize,    marsRadius,    marsYear);
+      var jupiterLoc = planetOrbit("CYAN",   jupiterSize, jupiterRadius, jupiterYear);
 
       int angle = 0;
       var moonLoc
@@ -1430,7 +1437,7 @@ public class Processor
     return Disposable.Empty;
   }
 
-  private DDS.TypedDataWriter<ShapeTypeExtended> square_writer;
+  //private DDS.TypedDataWriter<ShapeTypeExtended> square_writer;
   private DDS.TypedDataWriter<ShapeTypeExtended> triangle_writer;
   private DDS.TypedDataWriter<ShapeTypeExtended> circle_writer;
   private DDS.InstanceHandle_t instance_handle = DDS.InstanceHandle_t.HANDLE_NIL;

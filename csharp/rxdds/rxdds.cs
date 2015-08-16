@@ -1425,15 +1425,15 @@ namespace RTI.RxDDS
       return source.Subscribe(
           Observer.Create<TSource>(o => dw.write(o, ref instance_handle), onCompleted));
     }
-    public static IDisposable SubscribeAndDisposeOnCompleted<TSource>(
+    public static IObservable<TSource> DisposeAtEnd<TSource>(
         this IObservable<TSource> source,
         DDS.TypedDataWriter<TSource> dw,
         TSource instance)
     {
       DDS.InstanceHandle_t instance_handle = DDS.InstanceHandle_t.HANDLE_NIL;
-      return source.Subscribe(
-          Observer.Create<TSource>(o => dw.write(o, ref instance_handle),
-                                   () => dw.dispose(instance, ref instance_handle)));
+      return source.Do(o  => dw.write(o, ref instance_handle),
+                       ex => dw.dispose(instance, ref instance_handle),
+                       () => dw.dispose(instance, ref instance_handle));
     }
     
     public static IObservable<TSource> Shift<TSource>(
