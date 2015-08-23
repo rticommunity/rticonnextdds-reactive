@@ -59,9 +59,8 @@ namespace dds {
 
 namespace rx4dds {
 
-  class NotAliveNoWriters : std::runtime_error
+  struct NotAliveNoWriters : std::runtime_error
   {
-    public:
       explicit NotAliveNoWriters(const std::string& what_arg)
         : std::runtime_error(what_arg)
       { }
@@ -159,27 +158,20 @@ namespace rx4dds {
                   dds::sub::status::InstanceState istate;
                   sample.info().state() >> istate;
 
-                  if (sample.info().valid())
-                  {
-                    // RxCpp documentation suggests that the following check is 
-                    // is a good practice. See docs for rxcpp::observable<void,void>
-                    if(subscriber.is_subscribed())
-                      subscriber.on_next(sample);
-                  }
-                  else if (istate == dds::sub::status::InstanceState::not_alive_no_writers())
-                  {
-                    /*subscriber.on_error(
-                      std::make_exception_ptr(
-                      NotAliveNoWriters("No alive writers for topic = " + state_->topic_name_)));
-                      schedule_dr_subscription_end();*/
-                    if (subscriber.is_subscribed())
-                      subscriber.on_next(sample);
-                  }
-                  else if (istate == dds::sub::status::InstanceState::not_alive_disposed())
+                  if (istate == dds::sub::status::InstanceState::not_alive_disposed())
                   {
                     subscriber.on_completed();
                     schedule_dr_subscription_end();
                     break;
+                  }
+                  else
+                  {
+                    // RxCpp documentation suggests that the following check is 
+                    // is a good practice. See docs for rxcpp::observable<void,void>
+                    if (subscriber.is_subscribed())
+                    {
+                      subscriber.on_next(sample);
+                    }
                   }
                 }
               }
@@ -315,75 +307,52 @@ namespace rx4dds {
             state_->reader_,
             dds::sub::status::DataState::any(),
             [this, topsubject, schedule_dr_subscription_end]() mutable
-          {
-            try {
-              dds::sub::LoanedSamples<ShapeTypeExtended> samples =
-                state_->reader_.take();
+            {
+              try {
+                dds::sub::LoanedSamples<ShapeTypeExtended> samples =
+                  state_->reader_.take();
 
-              for (auto sample : samples)
-              {
-                dds::sub::status::InstanceState istate; 
-                sample.info().state() >> istate;
-                dds::core::InstanceHandle handle = sample.info().instance_handle();
-                BucketMap::const_iterator got = state_->buckets_.find(handle);
-
-                if (sample.info().valid()) 
+                for (auto sample : samples)
                 {
-                  if (got != state_->buckets_.end()) // instance exists
+                  dds::sub::status::InstanceState istate; 
+                  sample.info().state() >> istate;
+                  dds::core::InstanceHandle handle = sample.info().instance_handle();
+                  BucketMap::const_iterator got = state_->buckets_.find(handle);
+
+                  if (istate == dds::sub::status::InstanceState::not_alive_disposed())
                   {
-                    state_->buckets_[handle].get_subject()
-                                            .get_subscriber()
-                                            .on_next(sample);
+                    if (got != state_->buckets_.end()) // instance exists
+                    {
+                      state_->buckets_[handle].get_subject()
+                                              .get_subscriber()
+                                              .on_completed();
+                    
+                      state_->buckets_.erase(handle);
+                    }
+                    else
+                    {
+                      throw std::runtime_error("Instance should really exist at this point");
+                    }
                   }
-                  else // new instance 
+                  else
                   {
-                    state_->buckets_.emplace(
-                      std::make_pair(handle, Bucket(state_->key_selector_(sample.data()), topsubject)));
+                    if (sample.info().valid() && (got == state_->buckets_.end())) // new instance
+                    {
+                      state_->buckets_.emplace(
+                        std::make_pair(handle, Bucket(state_->key_selector_(sample.data()), topsubject)));
+                    }
 
                     // A new grouped_observable is pushed through 
-                    // topsubject before sample.data.
+                    // topsubject before sample.
                     state_->buckets_[handle].get_subject().get_subscriber().on_next(sample);
                   }
                 }
-                else if (istate == dds::sub::status::InstanceState::not_alive_disposed())
-                {
-                  if (got != state_->buckets_.end()) // instance exists
-                  {
-                    state_->buckets_[handle].get_subject()
-                                            .get_subscriber()
-                                            .on_completed();
-                    
-                    state_->buckets_.erase(handle);
-                  }
-                  else
-                  {
-                    throw std::runtime_error("Instance should really exist at this point");
-                  }
-                }
-                else if (istate == dds::sub::status::InstanceState::not_alive_no_writers())
-                {
-                  if (got != state_->buckets_.end()) // instance exists
-                  {
-                    state_->buckets_[handle]
-                          .get_subject()
-                          .get_subscriber()
-                          .on_next(sample);
-
-                    state_->buckets_.erase(handle);
-                  }
-                  else
-                  {
-                    throw std::runtime_error("Instance should really exist at this point");
-                  }                    
-                }
-                
               }
-            }
-            catch (...)
-            {
-              topsubject.get_subscriber().on_error(std::current_exception());
-              schedule_dr_subscription_end();
-            }
+              catch (...)
+              {
+                topsubject.get_subscriber().on_error(std::current_exception());
+                schedule_dr_subscription_end();
+              }
           });
 
           state_->wait_set_ += state_->read_condition_;
@@ -391,6 +360,89 @@ namespace rx4dds {
         }
       }
 
+    };
+
+    class ErrorOnNoAliveWritersOp
+    {
+    public:
+
+      template <class Observable>
+      Observable operator()(const Observable & prev) const
+      {
+        typedef typename Observable::value_type LoanedSample;
+
+        return rxcpp::observable<>::create<LoanedSample>(
+          [prev](rxcpp::subscriber<LoanedSample> subscriber)
+        {
+          rxcpp::composite_subscription subscription;
+          subscription.add(rxcpp::composite_subscription::empty());
+
+          subscription.add(
+            prev.subscribe(
+            [subscriber, subscription](LoanedSample sample)
+          {
+            dds::sub::status::InstanceState istate;
+            sample.info().state() >> istate;
+
+            if (istate == dds::sub::status::InstanceState::not_alive_no_writers())
+            {
+              subscriber.on_error(
+                std::make_exception_ptr(NotAliveNoWriters("NotAliveNoWriters")));
+              subscription.unsubscribe();
+            }
+            else
+              subscriber.on_next(sample);
+          },
+            [subscriber](std::exception_ptr eptr) { subscriber.on_error(eptr);  },
+            [subscriber]() { subscriber.on_completed();  }
+          ));
+
+          return subscription;
+        });
+      };
+    };
+
+    class SkipInvalidSamplesOp
+    {
+    public:
+
+      template <class Observable>
+      Observable operator ()(const Observable & prev) const
+      {
+        typedef typename Observable::value_type LoanedSample;
+        return prev.filter([](LoanedSample sample) {
+          return sample.info().valid();
+        });
+      };
+    };
+
+    class MapSampleToDataOp
+    {
+    public:
+
+      template <class Observable>
+      rxcpp::observable<typename Observable::value_type::DataType>
+        operator ()(const Observable & prev) const
+      {
+        typedef typename Observable::value_type LoanedSample;
+        return prev.map([](LoanedSample sample) {
+          return sample.data();
+        });
+      }
+    };
+
+    class UnkeyOp
+    {
+    public:
+
+      template <class GroupedObservable>
+      rxcpp::observable<typename GroupedObservable::value_type>
+        operator ()(const GroupedObservable & prev) const
+      {
+        typedef typename GroupedObservable::value_type LoanedSample;
+        rxcpp::observable<LoanedSample> unkeyed_observable = prev;
+        return unkeyed_observable;
+      }
     };
 
   } // namespace detail
@@ -442,19 +494,25 @@ namespace rx4dds {
         return subscription;
       });
   }
+
+  detail::ErrorOnNoAliveWritersOp error_on_no_alive_writers()
+  {
+    return detail::ErrorOnNoAliveWritersOp();
+  }
+
+  detail::SkipInvalidSamplesOp skip_invalid_samples()
+  {
+    return detail::SkipInvalidSamplesOp();
+  }
+
+  detail::MapSampleToDataOp map_sample_to_data()
+  {
+    return detail::MapSampleToDataOp();
+  }
+
+  detail::UnkeyOp to_unkeyed()
+  {
+    return detail::UnkeyOp();
+  }
+
 } // namespace rx4dds
-
-
-/*class KeyStorage
-{
-Key key_;
-public:
-
-explicit KeyStorage(const Key & k) : key_(k) { }
-explicit KeyStorage(Key&& k) : key_(std::move(k)) { }
-
-const Key & on_get_key() const
-{
-return key_;
-}
-};*/
