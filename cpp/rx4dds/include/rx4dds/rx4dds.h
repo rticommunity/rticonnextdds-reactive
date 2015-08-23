@@ -16,13 +16,30 @@ namespace std
   template <>
   struct hash<dds::core::InstanceHandle>
   {
+  private:
+    std::string handle_;
+
+  public:
+    hash()
+    {
+      handle_.resize(64);
+    }
+
     std::size_t operator()(const dds::core::InstanceHandle& ihandle) const
     {
-      std::string handle;
-      handle.resize(64);
-      std::ostringstream out(handle);
+      std::ostringstream out(handle_);
       out << ihandle;
-      return std::hash<string>()(handle);
+      return std::hash<std::string>()(handle_);
+    }
+  };
+
+  
+  template <>
+  struct hash<dds::core::string>
+  {
+    std::size_t operator()(const dds::core::string& str) const
+    {
+      return std::hash<const char *>()(str.c_str());
     }
 
   };
@@ -103,7 +120,7 @@ namespace rx4dds {
         part, topic_name, wait_set, worker))
       { }
 
-      void initialize_once(rxcpp::subjects::subject<T> subject)
+      void initialize_once(rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject)
       {
         if (!state_->initdone_)
         {
@@ -114,7 +131,7 @@ namespace rx4dds {
             dds::sub::Subscriber(state_->participant_),
             state_->topic_);
 
-          typename rxcpp::subjects::subject<T>::subscriber_type subscriber = 
+          typename rxcpp::subjects::subject<rti::sub::LoanedSample<T>>::subscriber_type subscriber =
             subject.get_subscriber();
 
           auto schedule_dr_subscription_end = [this]()
@@ -147,15 +164,16 @@ namespace rx4dds {
                     // RxCpp documentation suggests that the following check is 
                     // is a good practice. See docs for rxcpp::observable<void,void>
                     if(subscriber.is_subscribed())
-                      subscriber.on_next(sample.data());
+                      subscriber.on_next(sample);
                   }
                   else if (istate == dds::sub::status::InstanceState::not_alive_no_writers())
                   {
-                    subscriber.on_error(
+                    /*subscriber.on_error(
                       std::make_exception_ptr(
                       NotAliveNoWriters("No alive writers for topic = " + state_->topic_name_)));
-                    schedule_dr_subscription_end();
-                    break;
+                      schedule_dr_subscription_end();*/
+                    if (subscriber.is_subscribed())
+                      subscriber.on_next(sample);
                   }
                   else if (istate == dds::sub::status::InstanceState::not_alive_disposed())
                   {
@@ -183,34 +201,34 @@ namespace rx4dds {
     class KeyedSubscription
     {
     private:
-      typedef rxcpp::grouped_observable<Key, T> GroupedObservable;
+      typedef rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>> GroupedObservable;
 
       class Bucket 
       {
-        rxcpp::subjects::subject<T> subject_;
+        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
         rxcpp::composite_subscription subscription_;
-        Key key_;
 
       public:
 
         Bucket() {}
 
-        Bucket(KeySelector key_selector, 
+        Bucket(Key key, 
                rxcpp::subjects::subject<GroupedObservable> topsubject)
         { 
           subscription_ =
             subject_
             .get_observable()
-            .group_by(std::move(key_selector),
-                      [](T & t) { return t; })
-            .map([this, topsubject](GroupedObservable go) {
-                   const_cast<Key &>(key_) = go.get_key();
+            .group_by([key](rti::sub::LoanedSample<T> sample) { 
+                        return key;
+                      },
+                      [](rti::sub::LoanedSample<T> sample) { return sample; })
+            .map([topsubject](GroupedObservable go) {
                    const_cast<rxcpp::subjects::subject<GroupedObservable> &>(topsubject).get_subscriber().on_next(go);
-                    return 0;
+                   return 0;
           }).subscribe();
         }
 
-        rxcpp::subjects::subject<T> & get_subject()
+        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> & get_subject()
         {
           return subject_;
         }
@@ -315,16 +333,16 @@ namespace rx4dds {
                   {
                     state_->buckets_[handle].get_subject()
                                             .get_subscriber()
-                                            .on_next(sample.data());
+                                            .on_next(sample);
                   }
                   else // new instance 
                   {
                     state_->buckets_.emplace(
-                      std::make_pair(handle, Bucket(state_->key_selector_, topsubject)));
+                      std::make_pair(handle, Bucket(state_->key_selector_(sample.data()), topsubject)));
 
                     // A new grouped_observable is pushed through 
                     // topsubject before sample.data.
-                    state_->buckets_[handle].get_subject().get_subscriber().on_next(sample.data());
+                    state_->buckets_[handle].get_subject().get_subscriber().on_next(sample);
                   }
                 }
                 else if (istate == dds::sub::status::InstanceState::not_alive_disposed())
@@ -349,8 +367,7 @@ namespace rx4dds {
                     state_->buckets_[handle]
                           .get_subject()
                           .get_subscriber()
-                          .on_error(std::make_exception_ptr(
-                              NotAliveNoWriters("No alive writers for instance with key = ")));
+                          .on_next(sample);
 
                     state_->buckets_.erase(handle);
                   }
@@ -379,7 +396,7 @@ namespace rx4dds {
   } // namespace detail
 
   template <class T>
-  rxcpp::observable<T> from_topic(
+  rxcpp::observable<rti::sub::LoanedSample<T>> from_topic(
     dds::domain::DomainParticipant participant,
     const std::string & topic_name,
     dds::core::cond::WaitSet wait_set,
@@ -388,11 +405,11 @@ namespace rx4dds {
     detail::KeyLessSubscription<T> dr_subscription(
       participant, topic_name, wait_set, worker);
 
-    rx::subjects::subject<T> subject;
+    rx::subjects::subject<rti::sub::LoanedSample<T>> subject;
 
-    return rxcpp::observable<>::create<T>(
+    return rxcpp::observable<>::create<rti::sub::LoanedSample<T>>(
       [dr_subscription, subject]
-      (rxcpp::subscriber<T> subscriber)
+      (rxcpp::subscriber<rti::sub::LoanedSample<T>> subscriber)
       {
         const_cast<detail::KeyLessSubscription<T> &>(dr_subscription).initialize_once(subject);
         rxcpp::composite_subscription subscription =
@@ -402,7 +419,7 @@ namespace rx4dds {
   }
 
   template <class Key, class T, class KeySelector>
-  rxcpp::observable<rxcpp::grouped_observable<Key, T>> from_keyed_topic(
+  rxcpp::observable<rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>>> from_keyed_topic(
     dds::domain::DomainParticipant participant,
     const std::string & topic_name,
     dds::core::cond::WaitSet wait_set,
@@ -412,12 +429,12 @@ namespace rx4dds {
     detail::KeyedSubscription<Key, T, KeySelector> dr_subscription(
       participant, topic_name, wait_set, worker, std::forward<KeySelector>(key_selector));
 
-    rxcpp::subjects::subject<rxcpp::grouped_observable<Key, T>> subject;
+    rxcpp::subjects::subject<rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>>> subject;
 
     return rxcpp::observable<>::create<
-      rxcpp::grouped_observable<Key, T>>(
+      rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>>>(
       [dr_subscription, subject]
-      (rxcpp::subscriber<rxcpp::grouped_observable<Key, T>> subscriber)
+      (rxcpp::subscriber<rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>>> subscriber)
       {
         const_cast<detail::KeyedSubscription<Key, T, KeySelector> &>(dr_subscription).initialize_once(subject);
         rxcpp::composite_subscription subscription =
