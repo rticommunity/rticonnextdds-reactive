@@ -49,7 +49,7 @@ namespace std
 namespace dds {
   namespace core {
 
-    bool operator < (const dds::core::string & lhs, const dds::core::string & rhs)
+    inline bool operator < (const dds::core::string & lhs, const dds::core::string & rhs)
     {
       return strcmp(lhs.c_str(), rhs.c_str()) < 0;
     }
@@ -126,22 +126,23 @@ namespace rx4dds {
           state_->topic_ =
             dds::topic::Topic<T>(state_->participant_, state_->topic_name_);
 
-          state_->reader_ = dds::sub::DataReader<ShapeTypeExtended>(
+          state_->reader_ = dds::sub::DataReader<T>(
             dds::sub::Subscriber(state_->participant_),
             state_->topic_);
 
           typename rxcpp::subjects::subject<rti::sub::LoanedSample<T>>::subscriber_type subscriber =
             subject.get_subscriber();
 
-          auto schedule_dr_subscription_end = [this]()
+          auto schedule_dr_subscription_end = [](){};
+            /*[this]()
           {
             state_->worker_.schedule(
               rxcpp::schedulers::make_schedulable(
               state_->worker_,
               [this](const rxcpp::schedulers::schedulable &) {
-              state_.reset();
+                state_.reset();
             }));
-          };
+          };*/
 
           state_->read_condition_ =
             dds::sub::cond::ReadCondition(
@@ -150,7 +151,7 @@ namespace rx4dds {
             [this, subscriber, schedule_dr_subscription_end]()
             {
               try {
-                dds::sub::LoanedSamples<ShapeTypeExtended> samples =
+                dds::sub::LoanedSamples<T> samples =
                   state_->reader_.take();
 
                 for (auto sample : samples)
@@ -288,7 +289,7 @@ namespace rx4dds {
           state_->topic_ =
             dds::topic::Topic<T>(state_->participant_, state_->topic_name_);
 
-          state_->reader_ = dds::sub::DataReader<ShapeTypeExtended>(
+          state_->reader_ = dds::sub::DataReader<T>(
             dds::sub::Subscriber(state_->participant_),
             state_->topic_);
 
@@ -309,7 +310,7 @@ namespace rx4dds {
             [this, topsubject, schedule_dr_subscription_end]() mutable
             {
               try {
-                dds::sub::LoanedSamples<ShapeTypeExtended> samples =
+                dds::sub::LoanedSamples<T> samples =
                   state_->reader_.take();
 
                 for (auto sample : samples)
@@ -445,6 +446,64 @@ namespace rx4dds {
       }
     };
 
+    template <class T>
+    class PublishOverDDSOp
+    {
+      dds::pub::DataWriter<T> data_writer_;
+      const T & dispose_instance_;
+    public:
+
+      PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
+                       const T & instance)
+        : data_writer_(datawriter),
+          dispose_instance_(instance)
+      { }
+
+      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+      {
+        dds::pub::DataWriter<T> data_writer = this->data_writer_;
+        const T & instance = this->dispose_instance_;
+
+        return rxcpp::observable<>::create<T>([prev, data_writer, instance](rxcpp::subscriber<T> subscriber)
+        {
+          rxcpp::composite_subscription subscription;
+          subscription.add(rxcpp::composite_subscription::empty());
+
+          subscription.add(
+            prev.subscribe(
+              [data_writer, instance, subscriber, subscription](T & t) 
+                {
+                  dds::pub::DataWriter<T> datawriter = data_writer;
+                  try {
+                    datawriter.write(t);
+                    subscriber.on_next(t);
+                  }
+                  catch (...)
+                  {
+                    subscriber.on_error(std::current_exception());
+                    datawriter.dispose_instance(datawriter.register_instance(instance));
+                    subscription.unsubscribe();
+                  }
+                },
+                [subscriber](std::exception_ptr eptr) { subscriber.on_error(eptr);  },
+                [data_writer, instance, subscriber]() {
+                  try {
+                    dds::pub::DataWriter<T> datawriter = data_writer;
+                    datawriter.dispose_instance(datawriter.register_instance(instance));
+                    subscriber.on_completed();
+                  }
+                  catch (...)
+                  {
+                    subscriber.on_error(std::current_exception());
+                  }
+                }
+          ));
+
+          return subscription;
+        });
+      }
+    };
+
   } // namespace detail
 
   template <class T>
@@ -457,7 +516,7 @@ namespace rx4dds {
     detail::KeyLessSubscription<T> dr_subscription(
       participant, topic_name, wait_set, worker);
 
-    rx::subjects::subject<rti::sub::LoanedSample<T>> subject;
+    rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject;
 
     return rxcpp::observable<>::create<rti::sub::LoanedSample<T>>(
       [dr_subscription, subject]
@@ -495,24 +554,31 @@ namespace rx4dds {
       });
   }
 
-  detail::ErrorOnNoAliveWritersOp error_on_no_alive_writers()
+  inline detail::ErrorOnNoAliveWritersOp error_on_no_alive_writers()
   {
     return detail::ErrorOnNoAliveWritersOp();
   }
 
-  detail::SkipInvalidSamplesOp skip_invalid_samples()
+  inline detail::SkipInvalidSamplesOp skip_invalid_samples()
   {
     return detail::SkipInvalidSamplesOp();
   }
 
-  detail::MapSampleToDataOp map_sample_to_data()
+  inline detail::MapSampleToDataOp map_sample_to_data()
   {
     return detail::MapSampleToDataOp();
   }
 
-  detail::UnkeyOp to_unkeyed()
+  inline detail::UnkeyOp to_unkeyed()
   {
     return detail::UnkeyOp();
+  }
+
+  template<class T>
+  detail::PublishOverDDSOp<T> publish_over_dds(dds::pub::DataWriter<T> datawriter, 
+                                               const T & dispose_instance)
+  {
+    return detail::PublishOverDDSOp<T>(datawriter, dispose_instance);
   }
 
 } // namespace rx4dds
