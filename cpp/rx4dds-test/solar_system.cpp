@@ -5,6 +5,8 @@ namespace {
   const double M_PI = 3.14159265358979323846;
 }
 
+std::unordered_map<std::string, PlanetInfo> SolarSystem::planets;
+
 SolarSystem::SolarSystem(int domain_id)
   : participant_(domain_id),
     circle_topic_(participant_, "Circle"),
@@ -15,21 +17,21 @@ SolarSystem::SolarSystem(int domain_id)
     worker_(scheduler_.create_worker())
 {
   // PlanetInfo(orbitRadius, size, year-in-earth-days)
-  planets_["Mercury"] = PlanetInfo(30, 8, 88);
-  planets_["Venus"]   = PlanetInfo(50, 15, 225);
-  planets_["Earth"]   = PlanetInfo(70, 17, 365);
-  planets_["Mars"]    = PlanetInfo(90, 12, 686);
-  planets_["Jupiter"] = PlanetInfo(120, 30, 4329);
+  planets["Mercury"] = PlanetInfo(30, 8, 88);
+  planets["Venus"]   = PlanetInfo(50, 15, 225);
+  planets["Earth"]   = PlanetInfo(70, 17, 365);
+  planets["Mars"]    = PlanetInfo(90, 12, 686);
+  planets["Jupiter"] = PlanetInfo(120, 30, 4329);
 
-  // Yes, the Moon too! I know, it's not a planet.
-  planets_["Moon"] =  PlanetInfo(20, 8, 365);
+  // Yes, the Moon too! Right, it's not a planet.
+  planets["Moon"] =  PlanetInfo(20, 8, 365);
 }
 
 ShapeType SolarSystem::planet_location(const ShapeType & sun, 
                                        double degree, 
-                                       const std::string & planet_name) const
+                                       const std::string & planet_name) 
 {
-  const PlanetInfo & planet = planets_.at(planet_name);
+  const PlanetInfo & planet = planets.at(planet_name);
   return ShapeType(
     sun.color(),
     sun.x() + (int) (planet.orbit_radius_ * std::cos(degree * M_PI / 180)),
@@ -43,44 +45,91 @@ rxcpp::composite_subscription SolarSystem::big_bang()
   auto sun_orbit =
     rx4dds::from_topic<ShapeType>(
     participant_, "Square", waitset_, worker_)
+    >> rx4dds::to_observable()
+    >> rx4dds::complete_on_dispose()
     >> rx4dds::error_on_no_alive_writers()
     >> rx4dds::skip_invalid_samples()
     >> rx4dds::map_sample_to_data();
 
-/*  rx4dds::from_keyed_topic<dds::core::string, ShapeType>(
-    participant_, "Square", waitset_, worker_,
-    [](const ShapeType & shape) { return shape.color(); });
-*/
-
   // The Earth observable
   double earth_degree = 0;
-  auto earth_orbit = 
-    sun_orbit.map([this, earth_degree](const ShapeType & sun_loc) {
-      const_cast<double &>(earth_degree) += 2;
-      return planet_location(sun_loc, earth_degree, "Earth");
+  auto earth_orbit =
+    sun_orbit.map([earth_degree](const ShapeType & sun_loc) {
+    const_cast<double &>(earth_degree) += 2;
+    return SolarSystem::planet_location(sun_loc, earth_degree, "Earth");
   })
-  .publish()
-  .ref_count();
+    .publish()
+    .ref_count();
 
   // The Moon observable
   double moon_degree = 0;
   auto moon_orbit
-    = earth_orbit.map([this, moon_degree](const ShapeType earth_loc)
+    = earth_orbit.map([moon_degree](const ShapeType earth_loc)
   {
     const_cast<double &>(moon_degree) += 7;
-    return planet_location(earth_loc, moon_degree, "Moon");
+    return SolarSystem::planet_location(earth_loc, moon_degree, "Moon");
   });
 
   ShapeType blue_instance("BLUE", -1, -1, -1);
-  
+
   rxcpp::composite_subscription subscription;
   subscription.add((earth_orbit
-                    >> rx4dds::publish_over_dds(circle_writer_, blue_instance))
-                    .subscribe());
-  
+    >> rx4dds::publish_over_dds(circle_writer_, blue_instance))
+    .subscribe());
+
   subscription.add((moon_orbit
-                     >> rx4dds::publish_over_dds(triangle_writer_, blue_instance))
-                    .subscribe());
+    >> rx4dds::publish_over_dds(triangle_writer_, blue_instance))
+    .subscribe());
+
+  return subscription;
+}
+
+rxcpp::composite_subscription SolarSystem::big_bang2()
+{
+  auto solarsytem_stream =
+    rx4dds::from_keyed_topic<dds::core::string, ShapeType>(
+      participant_, "Square", waitset_, worker_,
+      [](const ShapeType & shape) { return shape.color(); });
+
+  typedef
+    rxcpp::grouped_observable < dds::core::string, rti::sub::LoanedSample<ShapeType> >
+      GroupedShapeObservable;
+
+  rxcpp::composite_subscription subscription = 
+    solarsytem_stream
+    .flat_map([this](GroupedShapeObservable go) 
+    {
+      ShapeType instance(go.get_key(), -1, -1, -1);
+
+      auto sun_orbit =
+        go  >> rx4dds::to_unkeyed()
+            >> rx4dds::error_on_no_alive_writers()
+            >> rx4dds::skip_invalid_samples()
+            >> rx4dds::map_sample_to_data();
+
+      double earth_degree = 0;
+      auto earth_orbit = 
+        sun_orbit.map([earth_degree](const ShapeType & sun_loc) {
+          const_cast<double &>(earth_degree) += 3;
+          return SolarSystem::planet_location(sun_loc, earth_degree, "Earth");
+      })
+      >> rx4dds::publish_over_dds(circle_writer_, instance);
+
+      double moon_degree = 0;
+      auto moon_orbit
+        = earth_orbit.map([moon_degree](const ShapeType & earth_loc)
+      {
+        const_cast<double &>(moon_degree) += 9;
+        return SolarSystem::planet_location(earth_loc, moon_degree, "Moon");
+      });
+      
+      return moon_orbit 
+              >> rx4dds::publish_over_dds(triangle_writer_, instance);
+    },
+    [](GroupedShapeObservable, const ShapeType &) {
+      return 0;
+    })
+    .subscribe();
 
   return subscription;
 }
