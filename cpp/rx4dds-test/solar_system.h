@@ -33,6 +33,8 @@ class SolarSystem
   rxcpp::schedulers::scheduler scheduler_;
   rxcpp::schedulers::worker worker_;
 
+  rx4dds::TopicSubscription<ShapeType> topic_subscription_;
+
   static std::unordered_map<std::string, PlanetInfo> planets;
   static const int earthYear = 365;
 
