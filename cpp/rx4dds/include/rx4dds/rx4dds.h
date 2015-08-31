@@ -2,6 +2,7 @@
 
 #include <dds/sub/ddssub.hpp>
 #include <dds/core/ddscore.hpp>
+#include <dds/core/cond/StatusCondition.hpp>
 
 #include <memory>
 #include <stdexcept>
@@ -70,48 +71,72 @@ namespace rx4dds {
       { }
   };
 
+    struct StatusSet
+    {
+      dds::core::status::StatusMask                     status_mask;
+      dds::core::status::LivelinessChangedStatus        liveliness_changed_status;
+      dds::core::status::SampleRejectedStatus           sample_rejected_status;
+      dds::core::status::SampleLostStatus               sample_lost_status;
+      dds::core::status::RequestedDeadlineMissedStatus  requested_deadline_missed_status;
+      dds::core::status::RequestedIncompatibleQosStatus requested_incompatible_qos_status;
+      dds::core::status::SubscriptionMatchedStatus      subscription_matched_status;
+      rti::core::status::DataReaderCacheStatus          datareader_cache_status;
+      rti::core::status::DataReaderProtocolStatus       datareader_protocol_status;
+    };
+
     template <class T>
     class TopicSubscription
     {
     private:
       struct SubscriptionState
       {
-        bool initdone_;
+        bool init_dr_done_;
+        bool init_read_condition_done_;
+        bool init_status_condition_done_;
+
         dds::domain::DomainParticipant participant_;
         std::string topic_name_;
         dds::topic::Topic<T> topic_;
         dds::sub::DataReader<T> reader_;
         dds::core::cond::WaitSet wait_set_;
         dds::sub::cond::ReadCondition read_condition_;
+        dds::core::cond::StatusCondition status_condition_;
         rxcpp::schedulers::worker worker_;
-        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
+        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> data_subject_;
+        rxcpp::subjects::subject<StatusSet> status_subject_;
 
         SubscriptionState(dds::domain::DomainParticipant part,
                           const std::string & topic_name,
                           dds::core::cond::WaitSet wait_set,
                           rxcpp::schedulers::worker worker)
-          : initdone_(false),
+          : init_dr_done_(false),
+            init_read_condition_done_(false),
+            init_status_condition_done_(false),
             participant_(part),
             topic_name_(topic_name),
             topic_(dds::core::null),
             reader_(dds::core::null),
             wait_set_(wait_set),
             read_condition_(dds::core::null),
+            status_condition_(dds::core::null),
             worker_(worker)
         { }
 
         ~SubscriptionState()
         {
-          if (initdone_)
+          if (init_read_condition_done_)
             wait_set_ -= read_condition_;
+
+          if (init_status_condition_done_)
+            wait_set_ -= status_condition_;
         }
       };
 
       std::shared_ptr<SubscriptionState> state_;
 
-      void initialize_once()
+      void initialize_datareader()
       {
-        if (!state_->initdone_)
+        if (!state_->init_dr_done_)
         {
           state_->topic_ =
             dds::topic::Topic<T>(state_->participant_, state_->topic_name_);
@@ -120,18 +145,30 @@ namespace rx4dds {
             dds::sub::Subscriber(state_->participant_),
             state_->topic_);
 
+          state_->init_dr_done_ = true;
+        }
+      }
+
+      void initialize_read_condition()
+      {
+        if (!state_->init_read_condition_done_)
+        {
+          this->initialize_datareader();
+
           typename rxcpp::subjects::subject<rti::sub::LoanedSample<T>>::subscriber_type subscriber =
-            state_->subject_.get_subscriber();
+            state_->data_subject_.get_subscriber();
+
+          std::shared_ptr<SubscriptionState> state = state_;
 
           state_->read_condition_ =
             dds::sub::cond::ReadCondition(
             state_->reader_,
             dds::sub::status::DataState::any(),
-            [this, subscriber]()
+            [state, subscriber]()
           {
             try {
               dds::sub::LoanedSamples<T> samples =
-                state_->reader_.take();
+                state->reader_.take();
 
               for (auto sample : samples)
               {
@@ -141,12 +178,31 @@ namespace rx4dds {
             catch (...)
             {
               subscriber.on_error(std::current_exception());
-              state_->subject_ = rxcpp::subjects::subject<rti::sub::LoanedSample<T>>();
+              state->data_subject_ = rxcpp::subjects::subject<rti::sub::LoanedSample<T>>();
             }
           });
 
-          state_->wait_set_ += state_->read_condition_;
-          state_->initdone_ = true;
+          state_->wait_set_ += state->read_condition_;
+          state_->init_read_condition_done_ = true;
+        }
+      }
+
+      void initialize_status_condition()
+      {
+        if (!state_->init_read_condition_done_)
+        {
+          this->initialize_datareader();
+
+          typename rxcpp::subjects::subject<StatusSet>::subscriber_type subscriber =
+            state_->data_subject_.get_subscriber();
+
+          std::shared_ptr<SubscriptionState> state = state_;
+
+          state_->status_condition_ = dds::core::cond::StatusCondition(state_->reader_);
+          state_->status_condition_.enabled_statuses(dds::core::status::StatusMask::all());
+          /* It's a tragedy that StatusCondition has no dispatch handler. */
+          state_->wait_set_ += state->read_condition_;
+          state_->init_status_condition_done_ = true;
         }
       }
 
@@ -159,18 +215,32 @@ namespace rx4dds {
                  part, topic_name, wait_set, worker))
       { }
 
-      rxcpp::observable<rti::sub::LoanedSample<T>> create_observable()
+      rxcpp::observable<rti::sub::LoanedSample<T>> create_data_observable()
       {
-        TopicSubscription<T> keyless_sub = *this;
+        TopicSubscription<T> topic_sub = *this;
 
         return rxcpp::observable<>::create<rti::sub::LoanedSample<T>>(
-          [keyless_sub](rxcpp::subscriber<rti::sub::LoanedSample<T>> subscriber)
-          {
-            const_cast<TopicSubscription<T> &>(keyless_sub).initialize_once();
-            rxcpp::composite_subscription subscription =
-              keyless_sub.state_->subject_.get_observable().subscribe(subscriber);
-            return subscription;
-          });
+          [topic_sub](rxcpp::subscriber<rti::sub::LoanedSample<T>> subscriber)
+        {
+          const_cast<TopicSubscription<T> &>(topic_sub).initialize_read_condition();
+          rxcpp::composite_subscription subscription =
+            topic_sub.state_->data_subject_.get_observable().subscribe(subscriber);
+          return subscription;
+        });
+      }
+
+      rxcpp::observable<StatusSet> create_status_observable()
+      {
+        TopicSubscription<T> topic_sub = *this;
+
+        return rxcpp::observable<>::create<StatusSet>(
+          [topic_sub](rxcpp::subscriber<StatusSet> subscriber)
+        {
+          const_cast<TopicSubscription<T> &>(topic_sub).initialize_status_condition();
+          rxcpp::composite_subscription subscription =
+            topic_sub.state_->status_subject_.get_observable().subscribe(subscriber);
+          return subscription;
+        });
       }
 
       void reset()
@@ -179,83 +249,83 @@ namespace rx4dds {
       }
     };
 
-  namespace detail {
+    namespace detail {
 
-    template <class Key, class T, class KeySelector>
-    class GroupByDDSInstanceOp
-    {
-      typedef rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>> GroupedObservable;
-
-      class Bucket
+      template <class Key, class T, class KeySelector>
+      class GroupByDDSInstanceOp
       {
-        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
-        rxcpp::composite_subscription subscription_;
+        typedef rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>> GroupedObservable;
+
+        class Bucket
+        {
+          rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
+          rxcpp::composite_subscription subscription_;
+
+        public:
+
+          Bucket() {}
+
+          Bucket(Key key,
+            rxcpp::subjects::subject<GroupedObservable> shared_topsubject)
+          {
+            subscription_ =
+              subject_
+              .get_observable()
+              .group_by([key](rti::sub::LoanedSample<T> sample) {
+              return key;
+            },
+              [](rti::sub::LoanedSample<T> sample) { return sample; })
+              .map([shared_topsubject](GroupedObservable go) {
+              const_cast<rxcpp::subjects::subject<GroupedObservable> &>(shared_topsubject).get_subscriber().on_next(go);
+              return 0;
+            }).subscribe();
+          }
+
+          rxcpp::subjects::subject<rti::sub::LoanedSample<T>> & get_subject()
+          {
+            return subject_;
+          }
+
+          const Key & get_key() const
+          {
+            return key_;
+          }
+        };
+
+        typedef std::unordered_map<dds::core::InstanceHandle, Bucket> BucketMap;
+
+        struct GroupByState
+        {
+          KeySelector key_selector_;
+          BucketMap buckets_;
+          rxcpp::subjects::subject<GroupedObservable> shared_topsubject_;
+
+          explicit GroupByState(KeySelector&& key_selector)
+            : key_selector_(std::move(key_selector))
+          {}
+        };
+
+        std::shared_ptr<GroupByState> state_;
 
       public:
 
-        Bucket() {}
+        explicit GroupByDDSInstanceOp(KeySelector key_selector)
+          : state_(std::make_shared<GroupByState>(std::move(key_selector)))
+        { }
 
-        Bucket(Key key,
-               rxcpp::subjects::subject<GroupedObservable> shared_topsubject)
+        rxcpp::observable<GroupedObservable>
+          operator()(const rxcpp::observable<rti::sub::LoanedSample<T>> & prev) const
         {
-          subscription_ =
-            subject_
-            .get_observable()
-            .group_by([key](rti::sub::LoanedSample<T> sample) {
-                        return key;
-            },
-            [](rti::sub::LoanedSample<T> sample) { return sample; })
-            .map([shared_topsubject](GroupedObservable go) {
-              const_cast<rxcpp::subjects::subject<GroupedObservable> &>(shared_topsubject).get_subscriber().on_next(go);
-              return 0;
-          }).subscribe();
-        }
+          std::shared_ptr<GroupByState> groupby_state = state_;
 
-        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> & get_subject()
-        {
-          return subject_;
-        }
+          return rxcpp::observable<>::create<GroupedObservable>(
+            [groupby_state, prev](rxcpp::subscriber<GroupedObservable> subscriber)
+          {
+            rxcpp::composite_subscription subscription;
+            subscription.add(groupby_state->shared_topsubject_.get_observable().subscribe(subscriber));
 
-        const Key & get_key() const
-        {
-          return key_;
-        }
-      };
-
-      typedef std::unordered_map<dds::core::InstanceHandle, Bucket> BucketMap;
-      
-      struct GroupByState
-      {
-        KeySelector key_selector_;
-        BucketMap buckets_;
-        rxcpp::subjects::subject<GroupedObservable> shared_topsubject_;
-
-        explicit GroupByState(KeySelector&& key_selector)
-          : key_selector_(std::move(key_selector))
-        {}
-      };
-
-      std::shared_ptr<GroupByState> state_;
-
-    public:
-
-      explicit GroupByDDSInstanceOp(KeySelector key_selector)
-        : state_(std::make_shared<GroupByState>(std::move(key_selector)))
-      { }
-
-      rxcpp::observable<GroupedObservable>
-        operator()(const rxcpp::observable<rti::sub::LoanedSample<T>> & prev) const
-      {
-        std::shared_ptr<GroupByState> groupby_state = state_;
-
-        return rxcpp::observable<>::create<GroupedObservable>(
-          [groupby_state, prev](rxcpp::subscriber<GroupedObservable> subscriber)
-        {
-          rxcpp::composite_subscription subscription;
-          subscription.add(groupby_state->shared_topsubject_.get_observable().subscribe(subscriber));
-
-          subscription.add(prev.subscribe(
-            [groupby_state, subscription](rti::sub::LoanedSample<T> sample)
+            subscription.add(prev.subscribe(
+              [groupby_state, subscription](rti::sub::LoanedSample<T> sample)
             {
               try {
                 dds::sub::status::InstanceState istate;
@@ -285,7 +355,7 @@ namespace rx4dds {
                   {
                     groupby_state->buckets_.emplace(
                       std::make_pair(handle, Bucket(groupby_state->key_selector_(sample.data()),
-                                                    groupby_state->shared_topsubject_)));
+                      groupby_state->shared_topsubject_)));
                   }
 
                   // A new grouped_observable is pushed through 
@@ -298,54 +368,54 @@ namespace rx4dds {
                 groupby_state->shared_topsubject_.get_subscriber().on_error(std::current_exception());
                 subscription.unsubscribe();
               }
-              
-          }));
-            
-          return subscription;
-        });
-      }
-    };
 
-    class InstanceStateInterpreter
-    {
-      dds::sub::status::InstanceState interpreted_instance_state_;
+            }));
 
-      explicit InstanceStateInterpreter(dds::sub::status::InstanceState state)
-        : interpreted_instance_state_(state)
+            return subscription;
+          });
+        }
+      };
+
+      class InstanceStateInterpreter
+      {
+        dds::sub::status::InstanceState interpreted_instance_state_;
+
+        explicit InstanceStateInterpreter(dds::sub::status::InstanceState state)
+          : interpreted_instance_state_(state)
         {
           if ((state != dds::sub::status::InstanceState::not_alive_disposed()) &&
-              (state != dds::sub::status::InstanceState::not_alive_no_writers()))
-          throw std::logic_error("Precondition not met: Only NOT_ALIVE_DISPOSED and NOT_ALIVE_NO_WRITERS states can be interpreted.");
+            (state != dds::sub::status::InstanceState::not_alive_no_writers()))
+            throw std::logic_error("Precondition not met: Only NOT_ALIVE_DISPOSED and NOT_ALIVE_NO_WRITERS states can be interpreted.");
         }
 
-    public:
+      public:
 
-      static InstanceStateInterpreter create_not_alive_disposed_intrepreter()
-      {
-        return InstanceStateInterpreter(dds::sub::status::InstanceState::not_alive_disposed());
-      }
-
-      static InstanceStateInterpreter create_not_alive_no_writers_intrepreter()
-      {
-        return InstanceStateInterpreter(dds::sub::status::InstanceState::not_alive_no_writers());
-      }
-
-      template <class Observable>
-      Observable operator()(const Observable & prev) const
-      {
-        typedef typename Observable::value_type LoanedSample;
-        dds::sub::status::InstanceState match_istate =
-          interpreted_instance_state_;
-
-        return rxcpp::observable<>::create<LoanedSample>(
-          [prev, match_istate](rxcpp::subscriber<LoanedSample> subscriber)
+        static InstanceStateInterpreter create_not_alive_disposed_intrepreter()
         {
-          rxcpp::composite_subscription subscription;
-          subscription.add(rxcpp::composite_subscription::empty());
+          return InstanceStateInterpreter(dds::sub::status::InstanceState::not_alive_disposed());
+        }
 
-          subscription.add(
-            prev.subscribe(
-            [subscriber, subscription, match_istate](LoanedSample sample)
+        static InstanceStateInterpreter create_not_alive_no_writers_intrepreter()
+        {
+          return InstanceStateInterpreter(dds::sub::status::InstanceState::not_alive_no_writers());
+        }
+
+        template <class Observable>
+        Observable operator()(const Observable & prev) const
+        {
+          typedef typename Observable::value_type LoanedSample;
+          dds::sub::status::InstanceState match_istate =
+            interpreted_instance_state_;
+
+          return rxcpp::observable<>::create<LoanedSample>(
+            [prev, match_istate](rxcpp::subscriber<LoanedSample> subscriber)
+          {
+            rxcpp::composite_subscription subscription;
+            subscription.add(rxcpp::composite_subscription::empty());
+
+            subscription.add(
+              prev.subscribe(
+              [subscriber, subscription, match_istate](LoanedSample sample)
             {
               dds::sub::status::InstanceState istate;
               sample.info().state() >> istate;
@@ -367,149 +437,90 @@ namespace rx4dds {
               else
                 subscriber.on_next(sample);
             },
-            [subscriber](std::exception_ptr eptr) { subscriber.on_error(eptr);  },
-            [subscriber]() { subscriber.on_completed();  }
-          ));
+              [subscriber](std::exception_ptr eptr) { subscriber.on_error(eptr);  },
+              [subscriber]() { subscriber.on_completed();  }
+            ));
 
-          return subscription;
-        });
+            return subscription;
+          });
+        };
       };
-    };
 
-    class SkipInvalidSamplesOp
-    {
-    public:
-
-      template <class Observable>
-      Observable operator ()(const Observable & prev) const
+      class SkipInvalidSamplesOp
       {
-        typedef typename Observable::value_type LoanedSample;
-        return prev.filter([](LoanedSample sample) {
-          return sample.info().valid();
-        });
+      public:
+
+        template <class Observable>
+        Observable operator ()(const Observable & prev) const
+        {
+          typedef typename Observable::value_type LoanedSample;
+          return prev.filter([](LoanedSample sample) {
+            return sample.info().valid();
+          });
+        };
       };
-    };
 
-    class MapSampleToDataOp
-    {
-    public:
-
-      template <class Observable>
-      rxcpp::observable<typename Observable::value_type::DataType>
-        operator ()(const Observable & prev) const
+      class MapSampleToDataOp
       {
-        typedef typename Observable::value_type LoanedSample;
-        return prev.map([](LoanedSample sample) {
-          return sample.data();
-        });
-      }
-    };
+      public:
 
-    class UnkeyOp
-    {
-    public:
-
-      template <class GroupedObservable>
-      rxcpp::observable<typename GroupedObservable::value_type>
-        operator ()(const GroupedObservable & prev) const
-      {
-        typedef typename GroupedObservable::value_type LoanedSample;
-        rxcpp::observable<LoanedSample> unkeyed_observable = prev;
-        return unkeyed_observable;
-      }
-    };
-
-    template <class T>
-    class PublishOverDDSOp
-    {
-      dds::pub::DataWriter<T> data_writer_;
-      const T & dispose_instance_;
-    public:
-
-      PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
-                       const T & instance)
-        : data_writer_(datawriter),
-          dispose_instance_(instance)
-      { }
-
-      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
-      {
-        dds::pub::DataWriter<T> data_writer = this->data_writer_;
-        const T & instance = this->dispose_instance_;
-
-        return rxcpp::observable<>::create<T>([prev, data_writer, instance](rxcpp::subscriber<T> subscriber)
+        template <class Observable>
+        rxcpp::observable<typename Observable::value_type::DataType>
+          operator ()(const Observable & prev) const
         {
-          rxcpp::composite_subscription subscription;
-          subscription.add(rxcpp::composite_subscription::empty());
+          typedef typename Observable::value_type LoanedSample;
+          return prev.map([](LoanedSample sample) {
+            return sample.data();
+          });
+        }
+      };
 
-          subscription.add(
-            prev.subscribe(
-              [data_writer, instance, subscriber, subscription](T & t) 
-                {
-                  dds::pub::DataWriter<T> datawriter = data_writer;
-                  try {
-                    datawriter.write(t);
-                    subscriber.on_next(t);
-                  }
-                  catch (...)
-                  {
-                    subscriber.on_error(std::current_exception());
-                    datawriter.dispose_instance(datawriter.register_instance(instance));
-                    subscription.unsubscribe();
-                  }
-                },
-                [subscriber](std::exception_ptr eptr) { subscriber.on_error(eptr);  },
-                [data_writer, instance, subscriber, subscription]() {
-                  try {
-                    dds::pub::DataWriter<T> datawriter = data_writer;
-                    datawriter.dispose_instance(datawriter.register_instance(instance));
-                    subscriber.on_completed();
-                  }
-                  catch (...)
-                  {
-                    subscriber.on_error(std::current_exception());
-                    subscription.unsubscribe();
-                  }
-                }
-          ));
-
-          return subscription;
-        });
-      }
-    };
-
-    template <class OnNext, class OnError, class OnCompleted>
-    class DoOp
-    {
-      OnNext on_next_;
-      OnError on_error_;
-      OnCompleted on_completed_;
-
-    public:
-
-      DoOp(OnNext on_next,
-           OnError on_error,
-           OnCompleted on_completed)
-        : on_next_(std::move(on_next)),
-          on_error_(std::move(on_error)),
-          on_completed_(std::move(on_completed))
-      { }
-
-      template <class T>
-      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+      class UnkeyOp
       {
-        OnNext on_next           = on_next_;
-        OnError on_error         = on_error_;
-        OnCompleted on_completed = on_completed_;
+      public:
 
-        return rxcpp::observable<>::create<T>(
-          [prev, on_next, on_error, on_completed](rxcpp::subscriber<T> subscriber)
+        template <class GroupedObservable>
+        rxcpp::observable<typename GroupedObservable::value_type>
+          operator ()(const GroupedObservable & prev) const
         {
-          rxcpp::composite_subscription subscription;
-          subscription.add(rxcpp::composite_subscription::empty());
+          typedef typename GroupedObservable::value_type LoanedSample;
+          rxcpp::observable<LoanedSample> unkeyed_observable = prev;
+          return unkeyed_observable;
+        }
+      };
 
-          subscription.add(prev.subscribe(
-            [subscriber, subscription, on_next](T & t)
+      template <class OnNext, class OnError, class OnCompleted>
+      class DoOp
+      {
+        OnNext on_next_;
+        OnError on_error_;
+        OnCompleted on_completed_;
+
+      public:
+
+        DoOp(OnNext on_next,
+          OnError on_error,
+          OnCompleted on_completed)
+          : on_next_(std::move(on_next)),
+            on_error_(std::move(on_error)),
+            on_completed_(std::move(on_completed))
+        { }
+
+        template <class T>
+        rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+        {
+          OnNext on_next = on_next_;
+          OnError on_error = on_error_;
+          OnCompleted on_completed = on_completed_;
+
+          return rxcpp::observable<>::create<T>(
+            [prev, on_next, on_error, on_completed](rxcpp::subscriber<T> subscriber)
+          {
+            rxcpp::composite_subscription subscription;
+            subscription.add(rxcpp::composite_subscription::empty());
+
+            subscription.add(prev.subscribe(
+              [subscriber, subscription, on_next](T & t)
             {
               try {
                 on_next(t);
@@ -521,8 +532,8 @@ namespace rx4dds {
                 subscription.unsubscribe();
               }
             },
-            [subscriber, subscription, on_error](std::exception_ptr eptr)
-            { 
+              [subscriber, subscription, on_error](std::exception_ptr eptr)
+            {
               try {
                 on_error(eptr);
                 subscriber.on_error(eptr);
@@ -533,7 +544,7 @@ namespace rx4dds {
                 subscription.unsubscribe();
               }
             },
-            [subscriber, subscription, on_completed]() {
+              [subscriber, subscription, on_completed]() {
               try {
                 on_completed();
                 subscriber.on_completed();
@@ -543,9 +554,46 @@ namespace rx4dds {
                 subscriber.on_error(std::current_exception());
                 subscription.unsubscribe();
               }
-          }));
+            }));
 
-          return subscription;
+            return subscription;
+          });
+        }
+      };
+
+    } // namespace detail
+
+    template <class OnNext, class OnError, class OnCompleted>
+    detail::DoOp<OnNext, OnError, OnCompleted> do_effect(OnNext&&, OnError&&, OnCompleted&&);
+
+    namespace detail {
+
+    template <class T>
+    class PublishOverDDSOp
+    {
+      dds::pub::DataWriter<T> data_writer_;
+      T dispose_instance_;
+    public:
+
+      PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
+                        const T & instance)
+      : data_writer_(datawriter),
+        dispose_instance_(instance)
+      { }
+
+      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+      {
+        dds::pub::DataWriter<T> data_writer = data_writer_;
+        const T & instance = dispose_instance_;
+
+        return prev >> rx4dds::do_effect(
+          [data_writer](T & t) { 
+          const_cast<dds::pub::DataWriter<T> &>(data_writer).write(t);
+          },
+          [](std::exception_ptr eptr) { /* no-op */ },
+          [data_writer, instance]() { 
+            dds::pub::DataWriter<T> & dw = const_cast<dds::pub::DataWriter<T> &>(data_writer);
+            dw.dispose_instance(dw.register_instance(instance)); 
         });
       }
     };
