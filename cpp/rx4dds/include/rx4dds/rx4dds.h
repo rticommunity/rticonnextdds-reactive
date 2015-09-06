@@ -761,103 +761,6 @@ namespace rx4dds {
       }
     };
 
-    template<class T>
-    class DynamicCombineLatestOp
-    {
-      struct CombineLatestSubscriptionState 
-      {
-        std::vector<T> result_vector;
-        std::vector<char> init_vector;
-        rxcpp::composite_subscription subscription;
-        size_t init_count;
-        size_t expected_count;
-        size_t completed_count;
-
-        explicit CombineLatestSubscriptionState()
-          : init_count(0),
-            expected_count(0),
-            completed_count(0)
-        { }
-
-        void restart(size_t expected)
-        {
-          subscription = rxcpp::composite_subscription();
-          result_vector = std::vector<T>(expected, T());
-          init_vector = std::vector<char>(expected, 0);
-          init_count = 0;
-          expected_count = expected;
-          completed_count = 0;
-        }
-      };
-    
-    public:
-
-      template <class Observable>
-      rxcpp::observable<std::vector<T>> operator ()(rxcpp::observable<std::vector<Observable>> prev)
-      {
-        return rxcpp::observable<>::create<std::vector<T>>([prev](rxcpp::subscriber<std::vector<T>> subscriber)
-        {
-          auto state = std::make_shared<CombineLatestSubscriptionState>();
-
-          return prev.subscribe(
-            [prev, subscriber, state]
-            (const std::vector<Observable> & alive_observables) { 
-              size_t i = 0;
-              state->restart(alive_observables.size());
-
-              for (auto & observable : alive_observables)
-              {
-                state->subscription.add(
-                  observable.subscribe(
-                  [i, state, subscriber](const typename Observable::value_type & v) {
-                    state->result_vector[i] = v;
-
-                    if (state->init_vector[i] != 1)
-                    {
-                      state->init_vector[i] = 1;
-                      state->init_count++;
-                    }
-
-                    if (state->init_count == state->expected_count)
-                      subscriber.on_next(state->result_vector);
-                  },
-                  [state, subscriber](std::exception_ptr eptr) {
-                    subscriber.on_error(eptr);
-                    state->subscription.unsubscribe();
-                    remove_const(state).reset();
-                  },
-                  [state, subscriber](){
-                    bool flush = true;
-                    if (state->init_count == state->expected_count) // all initialized
-                    {
-                      state->completed_count++;
-                      if (state->completed_count == state->expected_count)
-                        flush = true;
-                      else
-                        flush = false;
-                    }
-                    if (flush)
-                    {
-                      subscriber.on_completed();
-                      state->subscription.unsubscribe();
-                      remove_const(state).reset();
-                    }
-                  }));
-                i++;
-              }
-            },
-            [subscriber, state](std::exception_ptr eptr) { 
-              subscriber.on_error(eptr);  
-              remove_const(state).reset();
-            },
-            [subscriber, state]() { 
-              subscriber.on_completed(); 
-              remove_const(state).reset();
-            });
-        });
-      }
-    };
-
     class NoOpOnCompleted
     {
       public:
@@ -938,12 +841,6 @@ namespace rx4dds {
   inline detail::CoalesceAliveOp coalesce_alive()
   {
     return detail::CoalesceAliveOp();
-  }
-
-  template <class T>
-  inline detail::DynamicCombineLatestOp<T> dynamic_combine_latest()
-  {
-    return detail::DynamicCombineLatestOp<T>();
   }
 
   template<class T>
