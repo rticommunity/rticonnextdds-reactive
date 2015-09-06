@@ -9,6 +9,8 @@
 #include <string>
 #include <unordered_map>
 #include <functional>
+#include <vector>
+#include <mutex>
 
 #include "rxcpp/rx.hpp"
 
@@ -60,16 +62,16 @@ namespace dds {
 
 namespace rx4dds {
 
-  struct NotAliveNoWriters : std::runtime_error
-  {
-      explicit NotAliveNoWriters(const std::string& what_arg)
-        : std::runtime_error(what_arg)
-      { }
+    struct NotAliveNoWriters : std::runtime_error
+    {
+        explicit NotAliveNoWriters(const std::string& what_arg)
+          : std::runtime_error(what_arg)
+        { }
 
-      explicit NotAliveNoWriters(const char* what_arg)
-        : std::runtime_error(what_arg)
-      { }
-  };
+        explicit NotAliveNoWriters(const char* what_arg)
+          : std::runtime_error(what_arg)
+        { }
+    };
 
     struct StatusSet
     {
@@ -250,6 +252,18 @@ namespace rx4dds {
     };
 
     namespace detail {
+
+      template <class T>
+      T & remove_const(const T & t)
+      {
+        return const_cast<T &>(t);
+      }
+
+      template <class T>
+      T & remove_const(T & t)
+      {
+        return t;
+      }
 
       template <class Key, class T, class KeySelector>
       class GroupByDDSInstanceOp
@@ -490,7 +504,7 @@ namespace rx4dds {
       };
 
       template <class OnNext, class OnError, class OnCompleted>
-      class DoOp
+      class DoOp // Same as tap
       {
         OnNext on_next_;
         OnError on_error_;
@@ -568,35 +582,112 @@ namespace rx4dds {
 
     namespace detail {
 
-    template <class T>
-    class PublishOverDDSOp
-    {
-      dds::pub::DataWriter<T> data_writer_;
-      T dispose_instance_;
-    public:
-
-      PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
-                        const T & instance)
-      : data_writer_(datawriter),
-        dispose_instance_(instance)
-      { }
-
-      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+      template <class T>
+      class PublishOverDDSOp
       {
-        dds::pub::DataWriter<T> data_writer = data_writer_;
-        const T & instance = dispose_instance_;
+        dds::pub::DataWriter<T> data_writer_;
+        T dispose_instance_;
+      public:
 
-        return prev >> rx4dds::do_effect(
-          [data_writer](T & t) { 
-          const_cast<dds::pub::DataWriter<T> &>(data_writer).write(t);
+        PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
+          const T & instance)
+          : data_writer_(datawriter),
+          dispose_instance_(instance)
+        { }
+
+        rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+        {
+          dds::pub::DataWriter<T> data_writer = data_writer_;
+          const T & instance = dispose_instance_;
+
+          return prev.tap(
+            [data_writer](T & t) {
+            const_cast<dds::pub::DataWriter<T> &>(data_writer).write(t);
           },
-          [](std::exception_ptr eptr) { /* no-op */ },
-          [data_writer, instance]() { 
+            [](std::exception_ptr eptr) { /* no-op */ },
+            [data_writer, instance]() {
             dds::pub::DataWriter<T> & dw = const_cast<dds::pub::DataWriter<T> &>(data_writer);
-            dw.dispose_instance(dw.register_instance(instance)); 
-        });
-      }
-    };
+            dw.dispose_instance(dw.register_instance(instance));
+          });
+        }
+      };
+
+      class CoalesceAliveOp
+      {
+      public:
+
+        template <class T>
+        static void remove_observable(
+          std::vector<rxcpp::observable<T>> & observable_vec,
+          std::vector<rxcpp::subscription> & subscription_vec,
+          rxcpp::observable<T> observable)
+        {
+          auto iter = std::find(observable_vec.begin(), observable_vec.end(), observable);
+          if (iter != observable_vec.end())
+          {
+            size_t index = iter - observable_vec.begin();
+            observable_vec.erase(iter);
+            subscription_vec.erase(subscription_vec.begin() + index);
+          }
+        }
+
+        template <class ObservableOfObservable>
+        rxcpp::observable<std::vector<typename ObservableOfObservable::value_type>>
+          operator ()(ObservableOfObservable prev) const
+        {
+          typedef std::vector<typename ObservableOfObservable::value_type> ResultType;
+          typedef std::vector<rxcpp::subscription> SubscriptionVecType;
+          
+          auto alive_vec_ptr = std::make_shared<ResultType> ();
+          auto alive_sub_ptr = std::make_shared<SubscriptionVecType>();
+          auto lock = std::make_shared<std::mutex>();
+
+          return rxcpp::observable<>::create<ResultType>(
+            [alive_vec_ptr, alive_sub_ptr, prev, lock](rxcpp::subscriber<ResultType> subscriber)
+            {
+              return prev.subscribe(
+                [alive_vec_ptr, alive_sub_ptr, subscriber, lock]
+                (typename ObservableOfObservable::value_type next_observable) {
+                  std::unique_lock<std::mutex> guard(*lock);
+                  auto & alive_vector = *detail::remove_const(alive_vec_ptr);
+                  auto iter = std::find(alive_vector.begin(), alive_vector.end(), next_observable);
+                  if (iter == alive_vector.end())
+                  {
+                    alive_vector.push_back(next_observable);
+                    detail::remove_const(alive_sub_ptr)->push_back(next_observable.subscribe(
+                      [](const typename ObservableOfObservable::value_type::value_type &) { /* No-op */ },
+                      [alive_vec_ptr, alive_sub_ptr, subscriber, next_observable, lock](std::exception_ptr) {
+                        std::unique_lock<std::mutex> guard(*lock);
+                        remove_observable(remove_const(*alive_vec_ptr),
+                                          remove_const(*alive_sub_ptr),
+                                          next_observable);
+                        subscriber.on_next(*alive_vec_ptr);
+                      },
+                      [alive_vec_ptr, alive_sub_ptr, subscriber, next_observable, lock]() {
+                        std::unique_lock<std::mutex> guard(*lock);
+                        remove_observable(remove_const(*alive_vec_ptr),
+                                          remove_const(*alive_sub_ptr),
+                                          next_observable);
+                        subscriber.on_next(*alive_vec_ptr);
+                      }));
+                  }
+                  subscriber.on_next(*alive_vec_ptr);
+              },
+              [alive_vec_ptr, alive_sub_ptr, subscriber, lock](std::exception_ptr eptr) {
+                  subscriber.on_error(eptr);
+                  std::unique_lock<std::mutex> guard(*lock);
+                  remove_const(alive_vec_ptr).reset();
+                  remove_const(alive_sub_ptr).reset();
+              },
+                [alive_vec_ptr, alive_sub_ptr, subscriber, lock]() {
+                  subscriber.on_completed();
+                  std::unique_lock<std::mutex> guard(*lock);
+                  remove_const(alive_vec_ptr).reset();
+                  remove_const(alive_sub_ptr).reset();
+              });
+            });
+        }
+      };
 
     class NoOpOnCompleted
     {
@@ -704,9 +795,14 @@ namespace rx4dds {
     return detail::UnkeyOp();
   }
 
+  inline detail::CoalesceAliveOp coalesce_alive()
+  {
+    return detail::CoalesceAliveOp();
+  }
+
   template<class T>
-  detail::PublishOverDDSOp<T> publish_over_dds(dds::pub::DataWriter<T> datawriter, 
-                                               const T & dispose_instance)
+  detail::PublishOverDDSOp<T> publish_over_dds(dds::pub::DataWriter<T> datawriter,
+    const T & dispose_instance)
   {
     return detail::PublishOverDDSOp<T>(datawriter, dispose_instance);
   }

@@ -40,8 +40,8 @@ class SolarSystem
 
 public:
   SolarSystem(int domain_id);
-  rxcpp::composite_subscription big_bang();
-  rxcpp::composite_subscription big_bang2();
+  rxcpp::composite_subscription blue();
+  rxcpp::composite_subscription multiple();
   void orbit(rxcpp::composite_subscription);
 
   static ShapeType planet_location(const ShapeType & sun,

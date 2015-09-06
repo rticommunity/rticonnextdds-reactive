@@ -40,7 +40,7 @@ ShapeType SolarSystem::planet_location(const ShapeType & sun,
     planet.size_);
 }
 
-rxcpp::composite_subscription SolarSystem::big_bang()
+rxcpp::composite_subscription SolarSystem::blue()
 {
   ShapeType blue_instance("BLUE", -1, -1, -1);
 
@@ -75,7 +75,7 @@ rxcpp::composite_subscription SolarSystem::big_bang()
   return moon_orbit.subscribe();
 }
 
-rxcpp::composite_subscription SolarSystem::big_bang2()
+rxcpp::composite_subscription SolarSystem::multiple()
 {
   auto solarsystem_stream =
     topic_subscription_.create_data_observable()
@@ -113,7 +113,7 @@ rxcpp::composite_subscription SolarSystem::big_bang2()
         const_cast<int &>(moon_degree) = (moon_degree + 9) % 360;
         return SolarSystem::planet_location(earth_loc, moon_degree, "Moon");
       });
-
+      
       return moon_orbit
         >> rx4dds::publish_over_dds(triangle_writer_, instance);
     },
