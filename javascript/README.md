@@ -7,7 +7,7 @@ RxJS (Node.js) Adapter for RTI Connext DDS. Works with [Connext Node.js Connecto
 - Stream Concatenation and Co-ordination Language for Reactive Stream Processing. See research [paper](https://community.rti.com/paper/streamcoco-dsl-processing-data-centric-streams-industrial-iot-edge-applications).
 - StreamCoCo used in [remote log analytics](http://www.slideshare.net/SumantTambe/remote-log-data-analytics-using-dds-and-rxjs)
 
-Here's a temperature monitoring and alerting program written in StreamCoCo.
+Here's a temperature monitoring and alerting program written in StreamCoCo. Yes, it's just JSON.
 
 ```json
 [
@@ -47,4 +47,5 @@ Here's a temperature monitoring and alerting program written in StreamCoCo.
  "trigger"  : true,
  "tags"     : [ "cpu_overheat", "cpu_heat_warning" ]
 }
+]
 ```
