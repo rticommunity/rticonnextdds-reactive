@@ -62,6 +62,78 @@ namespace dds {
 
 namespace rx4dds {
 
+  namespace detail {
+    template <typename T>
+    struct function_traits
+    {
+      typedef typename function_traits<decltype(&T::operator())>::result_type result_type;
+      typedef typename function_traits<decltype(&T::operator())>::argument_type argument_type;
+    };
+
+    template <typename R, typename C, typename A>
+    struct function_traits<R(C::*)(A)>
+    {
+      typedef R result_type;
+      typedef A argument_type;
+    };
+
+    template <typename R, typename C, typename A>
+    struct function_traits<R(C::*)(A) const>
+    {
+      typedef R result_type;
+      typedef A argument_type;
+    };
+
+    template <typename R, typename A>
+    struct function_traits<R(*)(A)>
+    {
+      typedef R result_type;
+      typedef A argument_type;
+    };
+
+    template <typename R, typename C, typename A1, typename A2>
+    struct function_traits<R(C::*)(A1, A2)>
+    {
+      typedef R result_type;
+      typedef void argument_type;
+    };
+
+    template <typename R, typename C, typename A1, typename A2>
+    struct function_traits<R(C::*)(A1, A2) const>
+    {
+      typedef R result_type;
+      typedef void argument_type;
+    };
+
+    template <typename R, typename A1, typename A2>
+    struct function_traits<R(*)(A1, A2)>
+    {
+      typedef R result_type;
+      typedef void argument_type;
+    };
+
+    template <class KeySelector>
+    struct argument_type
+    {
+      typedef
+        typename std::remove_const<
+        typename std::remove_reference<
+        typename detail::function_traits<KeySelector>::argument_type>::type>::type
+        type;
+    };
+
+    template <class KeySelector>
+    struct result_type
+    {
+      typedef
+        typename std::remove_const<
+        typename std::remove_reference<
+        typename detail::function_traits<KeySelector>::result_type>::type>::type
+        type;
+    };
+
+  } // namespace detail
+
     struct NotAliveNoWriters : std::runtime_error
     {
         explicit NotAliveNoWriters(const std::string& what_arg)
@@ -582,112 +654,209 @@ namespace rx4dds {
 
     namespace detail {
 
-      template <class T>
-      class PublishOverDDSOp
-      {
-        dds::pub::DataWriter<T> data_writer_;
-        T dispose_instance_;
-      public:
+    template <class T>
+    class PublishOverDDSOp
+    {
+      dds::pub::DataWriter<T> data_writer_;
+      T dispose_instance_;
+    public:
 
-        PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
-          const T & instance)
-          : data_writer_(datawriter),
-          dispose_instance_(instance)
+      PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
+        const T & instance)
+        : data_writer_(datawriter),
+        dispose_instance_(instance)
+      { }
+
+      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+      {
+        dds::pub::DataWriter<T> data_writer = data_writer_;
+        const T & instance = dispose_instance_;
+
+        return prev.tap(
+          [data_writer](T & t) {
+          const_cast<dds::pub::DataWriter<T> &>(data_writer).write(t);
+        },
+          [](std::exception_ptr eptr) { /* no-op */ },
+          [data_writer, instance]() {
+          dds::pub::DataWriter<T> & dw = const_cast<dds::pub::DataWriter<T> &>(data_writer);
+          dw.dispose_instance(dw.register_instance(instance));
+        });
+      }
+    };
+
+    class CoalesceAliveOp
+    {
+    public:
+
+      template <class Observable>
+      static void remove_observable(
+        std::vector<Observable> & observable_vec,
+        std::vector<rxcpp::subscription> & subscription_vec,
+        Observable observable)
+      {
+        auto iter = std::find(observable_vec.begin(), observable_vec.end(), observable);
+        if (iter != observable_vec.end())
+        {
+          size_t index = iter - observable_vec.begin();
+          observable_vec.erase(iter);
+          subscription_vec.erase(subscription_vec.begin() + index);
+        }
+      }
+
+      template <class ObservableOfObservable>
+      rxcpp::observable<std::vector<typename ObservableOfObservable::value_type>>
+        operator ()(ObservableOfObservable prev) const
+      {
+        typedef std::vector<typename ObservableOfObservable::value_type> ResultType;
+        typedef std::vector<rxcpp::subscription> SubscriptionVecType;
+          
+        auto alive_vec_ptr = std::make_shared<ResultType> ();
+        auto alive_sub_ptr = std::make_shared<SubscriptionVecType>();
+        auto lock = std::make_shared<std::mutex>();
+
+        return rxcpp::observable<>::create<ResultType>(
+          [alive_vec_ptr, alive_sub_ptr, prev, lock](rxcpp::subscriber<ResultType> subscriber)
+          {
+            return prev.subscribe(
+              [alive_vec_ptr, alive_sub_ptr, subscriber, lock]
+              (typename ObservableOfObservable::value_type next_observable) {
+                std::unique_lock<std::mutex> guard(*lock);
+                auto & alive_vector = *detail::remove_const(alive_vec_ptr);
+                auto iter = std::find(alive_vector.begin(), alive_vector.end(), next_observable);
+                if (iter == alive_vector.end())
+                {
+                  alive_vector.push_back(next_observable);
+                  detail::remove_const(alive_sub_ptr)->push_back(next_observable.subscribe(
+                    [](const typename ObservableOfObservable::value_type::value_type &) { /* No-op */ },
+                    [alive_vec_ptr, alive_sub_ptr, subscriber, next_observable, lock](std::exception_ptr) {
+                      std::unique_lock<std::mutex> guard(*lock);
+                      remove_observable(remove_const(*alive_vec_ptr),
+                                        remove_const(*alive_sub_ptr),
+                                        next_observable);
+                      subscriber.on_next(*alive_vec_ptr);
+                    },
+                    [alive_vec_ptr, alive_sub_ptr, subscriber, next_observable, lock]() {
+                      std::unique_lock<std::mutex> guard(*lock);
+                      remove_observable(remove_const(*alive_vec_ptr),
+                                        remove_const(*alive_sub_ptr),
+                                        next_observable);
+                      subscriber.on_next(*alive_vec_ptr);
+                    }));
+                }
+                subscriber.on_next(*alive_vec_ptr);
+            },
+            [alive_vec_ptr, alive_sub_ptr, subscriber, lock](std::exception_ptr eptr) {
+                subscriber.on_error(eptr);
+                std::unique_lock<std::mutex> guard(*lock);
+                remove_const(alive_vec_ptr).reset();
+                remove_const(alive_sub_ptr).reset();
+            },
+              [alive_vec_ptr, alive_sub_ptr, subscriber, lock]() {
+                subscriber.on_completed();
+                std::unique_lock<std::mutex> guard(*lock);
+                remove_const(alive_vec_ptr).reset();
+                remove_const(alive_sub_ptr).reset();
+            });
+          });
+      }
+    };
+
+    template<class T>
+    class DynamicCombineLatestOp
+    {
+      struct CombineLatestSubscriptionState 
+      {
+        std::vector<T> result_vector;
+        std::vector<char> init_vector;
+        rxcpp::composite_subscription subscription;
+        size_t init_count;
+        size_t expected_count;
+        size_t completed_count;
+
+        explicit CombineLatestSubscriptionState()
+          : init_count(0),
+            expected_count(0),
+            completed_count(0)
         { }
 
-        rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+        void restart(size_t expected)
         {
-          dds::pub::DataWriter<T> data_writer = data_writer_;
-          const T & instance = dispose_instance_;
-
-          return prev.tap(
-            [data_writer](T & t) {
-            const_cast<dds::pub::DataWriter<T> &>(data_writer).write(t);
-          },
-            [](std::exception_ptr eptr) { /* no-op */ },
-            [data_writer, instance]() {
-            dds::pub::DataWriter<T> & dw = const_cast<dds::pub::DataWriter<T> &>(data_writer);
-            dw.dispose_instance(dw.register_instance(instance));
-          });
+          subscription = rxcpp::composite_subscription();
+          result_vector = std::vector<T>(expected, T());
+          init_vector = std::vector<char>(expected, 0);
+          init_count = 0;
+          expected_count = expected;
+          completed_count = 0;
         }
       };
+    
+    public:
 
-      class CoalesceAliveOp
+      template <class Observable>
+      rxcpp::observable<std::vector<T>> operator ()(rxcpp::observable<std::vector<Observable>> prev)
       {
-      public:
-
-        template <class T>
-        static void remove_observable(
-          std::vector<rxcpp::observable<T>> & observable_vec,
-          std::vector<rxcpp::subscription> & subscription_vec,
-          rxcpp::observable<T> observable)
+        return rxcpp::observable<>::create<std::vector<T>>([prev](rxcpp::subscriber<std::vector<T>> subscriber)
         {
-          auto iter = std::find(observable_vec.begin(), observable_vec.end(), observable);
-          if (iter != observable_vec.end())
-          {
-            size_t index = iter - observable_vec.begin();
-            observable_vec.erase(iter);
-            subscription_vec.erase(subscription_vec.begin() + index);
-          }
-        }
+          auto state = std::make_shared<CombineLatestSubscriptionState>();
 
-        template <class ObservableOfObservable>
-        rxcpp::observable<std::vector<typename ObservableOfObservable::value_type>>
-          operator ()(ObservableOfObservable prev) const
-        {
-          typedef std::vector<typename ObservableOfObservable::value_type> ResultType;
-          typedef std::vector<rxcpp::subscription> SubscriptionVecType;
-          
-          auto alive_vec_ptr = std::make_shared<ResultType> ();
-          auto alive_sub_ptr = std::make_shared<SubscriptionVecType>();
-          auto lock = std::make_shared<std::mutex>();
+          return prev.subscribe(
+            [prev, subscriber, state]
+            (const std::vector<Observable> & alive_observables) { 
+              size_t i = 0;
+              state->restart(alive_observables.size());
 
-          return rxcpp::observable<>::create<ResultType>(
-            [alive_vec_ptr, alive_sub_ptr, prev, lock](rxcpp::subscriber<ResultType> subscriber)
-            {
-              return prev.subscribe(
-                [alive_vec_ptr, alive_sub_ptr, subscriber, lock]
-                (typename ObservableOfObservable::value_type next_observable) {
-                  std::unique_lock<std::mutex> guard(*lock);
-                  auto & alive_vector = *detail::remove_const(alive_vec_ptr);
-                  auto iter = std::find(alive_vector.begin(), alive_vector.end(), next_observable);
-                  if (iter == alive_vector.end())
-                  {
-                    alive_vector.push_back(next_observable);
-                    detail::remove_const(alive_sub_ptr)->push_back(next_observable.subscribe(
-                      [](const typename ObservableOfObservable::value_type::value_type &) { /* No-op */ },
-                      [alive_vec_ptr, alive_sub_ptr, subscriber, next_observable, lock](std::exception_ptr) {
-                        std::unique_lock<std::mutex> guard(*lock);
-                        remove_observable(remove_const(*alive_vec_ptr),
-                                          remove_const(*alive_sub_ptr),
-                                          next_observable);
-                        subscriber.on_next(*alive_vec_ptr);
-                      },
-                      [alive_vec_ptr, alive_sub_ptr, subscriber, next_observable, lock]() {
-                        std::unique_lock<std::mutex> guard(*lock);
-                        remove_observable(remove_const(*alive_vec_ptr),
-                                          remove_const(*alive_sub_ptr),
-                                          next_observable);
-                        subscriber.on_next(*alive_vec_ptr);
-                      }));
-                  }
-                  subscriber.on_next(*alive_vec_ptr);
-              },
-              [alive_vec_ptr, alive_sub_ptr, subscriber, lock](std::exception_ptr eptr) {
-                  subscriber.on_error(eptr);
-                  std::unique_lock<std::mutex> guard(*lock);
-                  remove_const(alive_vec_ptr).reset();
-                  remove_const(alive_sub_ptr).reset();
-              },
-                [alive_vec_ptr, alive_sub_ptr, subscriber, lock]() {
-                  subscriber.on_completed();
-                  std::unique_lock<std::mutex> guard(*lock);
-                  remove_const(alive_vec_ptr).reset();
-                  remove_const(alive_sub_ptr).reset();
-              });
+              for (auto & observable : alive_observables)
+              {
+                state->subscription.add(
+                  observable.subscribe(
+                  [i, state, subscriber](const typename Observable::value_type & v) {
+                    state->result_vector[i] = v;
+
+                    if (state->init_vector[i] != 1)
+                    {
+                      state->init_vector[i] = 1;
+                      state->init_count++;
+                    }
+
+                    if (state->init_count == state->expected_count)
+                      subscriber.on_next(state->result_vector);
+                  },
+                  [state, subscriber](std::exception_ptr eptr) {
+                    subscriber.on_error(eptr);
+                    state->subscription.unsubscribe();
+                    remove_const(state).reset();
+                  },
+                  [state, subscriber](){
+                    bool flush = true;
+                    if (state->init_count == state->expected_count) // all initialized
+                    {
+                      state->completed_count++;
+                      if (state->completed_count == state->expected_count)
+                        flush = true;
+                      else
+                        flush = false;
+                    }
+                    if (flush)
+                    {
+                      subscriber.on_completed();
+                      state->subscription.unsubscribe();
+                      remove_const(state).reset();
+                    }
+                  }));
+                i++;
+              }
+            },
+            [subscriber, state](std::exception_ptr eptr) { 
+              subscriber.on_error(eptr);  
+              remove_const(state).reset();
+            },
+            [subscriber, state]() { 
+              subscriber.on_completed(); 
+              remove_const(state).reset();
             });
-        }
-      };
+        });
+      }
+    };
 
     class NoOpOnCompleted
     {
@@ -701,54 +870,25 @@ namespace rx4dds {
         void operator ()(std::exception_ptr) const { }
     };
 
-    template <typename T>
-    struct function_traits 
+    template <class T>
+    struct CombineLatestSubscriptionState
     {
-      typedef typename function_traits<decltype(&T::operator())>::result_type result_type;
-      typedef typename function_traits<decltype(&T::operator())>::argument_type argument_type;
-    };
+      std::vector<T> result_vector;
+      std::vector<char> init_vector;
+      rxcpp::composite_subscription subscription;
+      size_t init_count;
+      size_t expected_count;
+      size_t completed_count;
 
-    template <typename R, typename C, typename A>
-    struct function_traits<R (C::*)(A)>
-    {
-      typedef R result_type;
-      typedef A argument_type;
+      explicit CombineLatestSubscriptionState(size_t expected)
+        : result_vector(expected, T()),
+          init_vector(expected, 0),
+          subscription(),
+          init_count(0),
+          expected_count(expected),
+          completed_count(0)
+      { }
     };
-
-    template <typename R, typename C, typename A>
-    struct function_traits<R (C::*)(A) const>
-    {
-      typedef R result_type;
-      typedef A argument_type;
-    };
-
-    template <typename R, typename A>
-    struct function_traits<R(*)(A)>
-    {
-      typedef R result_type;
-      typedef A argument_type;
-    };
-
-    template <class KeySelector>
-    struct argument_type
-    {
-      typedef
-        typename std::remove_const<
-          typename std::remove_reference<
-            typename detail::function_traits<KeySelector>::argument_type>::type>::type
-              type;
-    };
-
-    template <class KeySelector>
-    struct result_type
-    {
-      typedef
-        typename std::remove_const<
-          typename std::remove_reference<
-            typename detail::function_traits<KeySelector>::result_type>::type>::type
-              type;
-    };
-
   } // namespace detail
 
   template <class Key, class T, class KeySelector>
@@ -800,9 +940,15 @@ namespace rx4dds {
     return detail::CoalesceAliveOp();
   }
 
+  template <class T>
+  inline detail::DynamicCombineLatestOp<T> dynamic_combine_latest()
+  {
+    return detail::DynamicCombineLatestOp<T>();
+  }
+
   template<class T>
   detail::PublishOverDDSOp<T> publish_over_dds(dds::pub::DataWriter<T> datawriter,
-    const T & dispose_instance)
+                                               const T & dispose_instance)
   {
     return detail::PublishOverDDSOp<T>(datawriter, dispose_instance);
   }
@@ -832,6 +978,78 @@ namespace rx4dds {
       std::forward<OnNext>(on_next),
       detail::NoOpOnError(),
       detail::NoOpOnCompleted());
+  }
+
+  template <class Observable>
+  rxcpp::observable<std::vector<typename Observable::value_type>>
+    combine_latest(const std::vector<Observable> & sources)
+  {
+    typedef typename std::vector<typename Observable::value_type> EmittedType;
+
+    return rxcpp::observable<>::create<EmittedType>
+      ([sources](rxcpp::subscriber<EmittedType> subscriber)
+      {
+        auto state = 
+          std::make_shared<detail::CombineLatestSubscriptionState<
+            typename EmittedType::value_type>>(sources.size());
+
+        size_t i = 0;
+
+        for (auto & observable : sources)
+        {
+          state->subscription.add(
+            observable.subscribe(
+            [i, state, subscriber](const typename EmittedType::value_type & v) {
+              state->result_vector[i] = v;
+
+              if (state->init_vector[i] != 1)
+              {
+                state->init_vector[i] = 1;
+                state->init_count++;
+              }
+
+              if (state->init_count == state->expected_count)
+                subscriber.on_next(state->result_vector);
+            },
+            [state, subscriber](std::exception_ptr eptr) {
+              subscriber.on_error(eptr);
+              state->subscription.unsubscribe();
+              remove_const(state).reset();
+            },
+            [state, subscriber](){
+              bool flush = true;
+              if (state->init_count == state->expected_count) // all initialized
+              {
+                state->completed_count++;
+                if (state->completed_count == state->expected_count)
+                  flush = true;
+                else
+                  flush = false;
+              }
+              if (flush)
+              {
+                subscriber.on_completed();
+                state->subscription.unsubscribe();
+                remove_const(state).reset();
+              }
+            }));
+          i++;
+        }
+
+        return rxcpp::make_subscription([state]() {
+          state->subscription.unsubscribe();
+          remove_const(state).reset();
+        });
+
+      });
+  }
+
+  template <class ObservableIter>
+  rxcpp::observable<std::vector<typename ObservableIter::value_type::template value_type>>
+    combine_latest(ObservableIter begin, ObservableIter end)
+  {
+    std::vector<typename ObservableIter::value_type> sources(begin, end);
+    return rx4dds::combine_latest(sources);
   }
 
 } // namespace rx4dds
