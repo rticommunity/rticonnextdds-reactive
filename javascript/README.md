@@ -9,7 +9,7 @@ RxJS (Node.js) Adapter for RTI Connext DDS. Works with [Connext Node.js Connecto
 
 Here's a temperature monitoring and alerting program written in StreamCoCo.
 
-```javascript
+```json
 [
 {
  "name"     : "AlertsStream",
