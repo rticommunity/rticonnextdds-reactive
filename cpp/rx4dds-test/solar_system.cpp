@@ -50,7 +50,7 @@ rxcpp::composite_subscription SolarSystem::blue()
     >> rx4dds::complete_on_dispose()
     >> rx4dds::error_on_no_alive_writers()
     >> rx4dds::skip_invalid_samples()
-    >> rx4dds::map_sample_to_data();
+    >> rx4dds::map_samples_to_data();
 
   // The Earth observable
   int earth_degree = 0;
@@ -79,7 +79,7 @@ rxcpp::composite_subscription SolarSystem::multiple()
 {
   auto solarsystem_stream =
     topic_subscription_.create_data_observable()
-    >> rx4dds::group_by_dds_instance<dds::core::string, ShapeType>(
+    >> rx4dds::group_by_dds_instance(
         [](const ShapeType & shape) { return shape.color(); });
 
   typedef
@@ -96,7 +96,7 @@ rxcpp::composite_subscription SolarSystem::multiple()
         go  >> rx4dds::to_unkeyed()
             >> rx4dds::error_on_no_alive_writers()
             >> rx4dds::skip_invalid_samples()
-            >> rx4dds::map_sample_to_data();
+            >> rx4dds::map_samples_to_data();
 
       int earth_degree = 0;
       auto earth_orbit =

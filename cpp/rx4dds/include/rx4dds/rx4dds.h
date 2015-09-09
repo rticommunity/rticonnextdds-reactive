@@ -344,6 +344,7 @@ namespace rx4dds {
 
         class Bucket
         {
+          std::vector<rti::sub::LoanedSample<T>> snapshot_batch_;
           rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
           rxcpp::composite_subscription subscription_;
 
@@ -352,19 +353,22 @@ namespace rx4dds {
           Bucket() {}
 
           Bucket(Key key,
-            rxcpp::subjects::subject<GroupedObservable> shared_topsubject)
+                 rxcpp::subjects::subject<GroupedObservable> shared_topsubject)
           {
             subscription_ =
               subject_
               .get_observable()
               .group_by([key](rti::sub::LoanedSample<T> sample) {
-              return key;
-            },
-              [](rti::sub::LoanedSample<T> sample) { return sample; })
+                  return key;
+              },
+              [](rti::sub::LoanedSample<T> sample) { 
+                  return sample; 
+              })
               .map([shared_topsubject](GroupedObservable go) {
-              const_cast<rxcpp::subjects::subject<GroupedObservable> &>(shared_topsubject).get_subscriber().on_next(go);
-              return 0;
-            }).subscribe();
+                remove_const(shared_topsubject).get_subscriber().on_next(go);
+                return 0;
+              })
+              .subscribe();
           }
 
           rxcpp::subjects::subject<rti::sub::LoanedSample<T>> & get_subject()
@@ -372,9 +376,19 @@ namespace rx4dds {
             return subject_;
           }
 
-          const Key & get_key() const
+          void add(rti::sub::LoanedSample<T> sample)
           {
-            return key_;
+            snapshot_.push_back(sample);
+          }
+
+          size_t snapshot_size() const
+          {
+            return snapshot_batch_.size();
+          }
+
+          void clear_snapshot()
+          {
+            snapshot_batch_.clear();
           }
         };
 
@@ -440,8 +454,9 @@ namespace rx4dds {
                   if (sample.info().valid() && (got == groupby_state->buckets_.end())) // new instance
                   {
                     groupby_state->buckets_.emplace(
-                      std::make_pair(handle, Bucket(groupby_state->key_selector_(sample.data()),
-                      groupby_state->shared_topsubject_)));
+                      std::make_pair(handle, 
+                                     Bucket(groupby_state->key_selector_(sample.data()),
+                                            groupby_state->shared_topsubject_)));
                   }
 
                   // A new grouped_observable is pushed through 
@@ -487,7 +502,7 @@ namespace rx4dds {
         }
 
         template <class Observable>
-        Observable operator()(const Observable & prev) const
+        Observable operator()(Observable prev) const
         {
           typedef typename Observable::value_type LoanedSample;
           dds::sub::status::InstanceState match_istate =
@@ -537,7 +552,7 @@ namespace rx4dds {
       public:
 
         template <class Observable>
-        Observable operator ()(const Observable & prev) const
+        Observable operator ()(Observable prev) const
         {
           typedef typename Observable::value_type LoanedSample;
           return prev.filter([](LoanedSample sample) {
@@ -552,7 +567,7 @@ namespace rx4dds {
 
         template <class Observable>
         rxcpp::observable<typename Observable::value_type::DataType>
-          operator ()(const Observable & prev) const
+          operator ()(Observable prev) const
         {
           typedef typename Observable::value_type LoanedSample;
           return prev.map([](LoanedSample sample) {
@@ -567,7 +582,7 @@ namespace rx4dds {
 
         template <class GroupedObservable>
         rxcpp::observable<typename GroupedObservable::value_type>
-          operator ()(const GroupedObservable & prev) const
+          operator ()(GroupedObservable prev) const
         {
           typedef typename GroupedObservable::value_type LoanedSample;
           rxcpp::observable<LoanedSample> unkeyed_observable = prev;
@@ -593,7 +608,7 @@ namespace rx4dds {
         { }
 
         template <class T>
-        rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+        rxcpp::observable<T> operator ()(rxcpp::observable<T> prev) const
         {
           OnNext on_next = on_next_;
           OnError on_error = on_error_;
@@ -667,7 +682,7 @@ namespace rx4dds {
         dispose_instance_(instance)
       { }
 
-      rxcpp::observable<T> operator ()(const rxcpp::observable<T> & prev) const
+      rxcpp::observable<T> operator ()(rxcpp::observable<T> prev) const
       {
         dds::pub::DataWriter<T> data_writer = data_writer_;
         const T & instance = dispose_instance_;
@@ -746,14 +761,14 @@ namespace rx4dds {
                 subscriber.on_next(*alive_vec_ptr);
             },
             [alive_vec_ptr, alive_sub_ptr, subscriber, lock](std::exception_ptr eptr) {
-                subscriber.on_error(eptr);
                 std::unique_lock<std::mutex> guard(*lock);
+                subscriber.on_error(eptr);
                 remove_const(alive_vec_ptr).reset();
                 remove_const(alive_sub_ptr).reset();
             },
               [alive_vec_ptr, alive_sub_ptr, subscriber, lock]() {
-                subscriber.on_completed();
                 std::unique_lock<std::mutex> guard(*lock);
+                subscriber.on_completed();
                 remove_const(alive_vec_ptr).reset();
                 remove_const(alive_sub_ptr).reset();
             });
@@ -776,6 +791,7 @@ namespace rx4dds {
     template <class T>
     struct CombineLatestSubscriptionState
     {
+      std::mutex lock;
       std::vector<T> result_vector;
       std::vector<char> init_vector;
       rxcpp::composite_subscription subscription;
@@ -794,18 +810,12 @@ namespace rx4dds {
     };
   } // namespace detail
 
-  template <class Key, class T, class KeySelector>
-  detail::GroupByDDSInstanceOp<Key, T, KeySelector> group_by_dds_instance(KeySelector&& key_selector)
-  {
-    return detail::GroupByDDSInstanceOp<Key, T, KeySelector>(std::forward<KeySelector>(key_selector));
-  }
-
   template <class KeySelector>
   detail::GroupByDDSInstanceOp<
     typename detail::result_type<KeySelector>::type,
     typename detail::argument_type<KeySelector>::type,
     KeySelector>
-  group_by_key(KeySelector&& key_selector)
+    group_by_dds_instance(KeySelector&& key_selector)
   {
     return detail::GroupByDDSInstanceOp<
       typename detail::result_type<KeySelector>::type,
@@ -828,7 +838,7 @@ namespace rx4dds {
     return detail::SkipInvalidSamplesOp();
   }
 
-  inline detail::MapSampleToDataOp map_sample_to_data()
+  inline detail::MapSampleToDataOp map_samples_to_data()
   {
     return detail::MapSampleToDataOp();
   }
@@ -897,6 +907,7 @@ namespace rx4dds {
           state->subscription.add(
             observable.subscribe(
             [i, state, subscriber](const typename EmittedType::value_type & v) {
+              std::unique_lock<std::mutex> guard(state->lock);
               state->result_vector[i] = v;
 
               if (state->init_vector[i] != 1)
@@ -909,11 +920,13 @@ namespace rx4dds {
                 subscriber.on_next(state->result_vector);
             },
             [state, subscriber](std::exception_ptr eptr) {
+              std::unique_lock<std::mutex> guard(state->lock);
               subscriber.on_error(eptr);
               state->subscription.unsubscribe();
               remove_const(state).reset();
             },
             [state, subscriber](){
+              std::unique_lock<std::mutex> guard(state->lock);
               bool flush = true;
               if (state->init_count == state->expected_count) // all initialized
               {
