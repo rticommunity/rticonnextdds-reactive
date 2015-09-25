@@ -46,18 +46,22 @@ rxcpp::composite_subscription SolarSystem::blue()
 
   // The Sun observable
   auto sun_orbit =
-    topic_subscription_.create_data_observable()
+    topic_subscription_.create_observable()
     >> rx4dds::complete_on_dispose()
     >> rx4dds::error_on_no_alive_writers()
-    >> rx4dds::skip_invalid_samples()
-    >> rx4dds::map_samples_to_data();
+    >> rxcpp::operators::filter([](rti::sub::LoanedSample<ShapeType> sample) {
+        return sample.info().valid();
+    })
+    >> rxcpp::operators::map([](rti::sub::LoanedSample<ShapeType> sample) {
+      return sample.data();
+    });
 
   // The Earth observable
   int earth_degree = 0;
   auto earth_orbit =
-    sun_orbit.map([earth_degree](const ShapeType & sun_loc) 
+    sun_orbit.map([earth_degree]( ShapeType & sun_loc) 
     {
-      const_cast<int &>(earth_degree) = (earth_degree + 2) % 360;
+      const_cast<int &>(earth_degree) = (earth_degree + 3) % 360;
       return SolarSystem::planet_location(sun_loc, earth_degree, "Earth");
   })
   >> rx4dds::publish_over_dds(circle_writer_, blue_instance);
@@ -67,7 +71,7 @@ rxcpp::composite_subscription SolarSystem::blue()
   auto moon_orbit
     = earth_orbit.map([moon_degree](const ShapeType earth_loc)
       {
-        const_cast<int &>(moon_degree) = (moon_degree + 7) % 360;
+        const_cast<int &>(moon_degree) = (moon_degree + 9) % 360;
         return SolarSystem::planet_location(earth_loc, moon_degree, "Moon");
       })
       >> rx4dds::publish_over_dds(triangle_writer_, blue_instance);
@@ -78,7 +82,7 @@ rxcpp::composite_subscription SolarSystem::blue()
 rxcpp::composite_subscription SolarSystem::multiple()
 {
   auto solarsystem_stream =
-    topic_subscription_.create_data_observable()
+    topic_subscription_.create_observable()
     >> rx4dds::group_by_dds_instance(
         [](const ShapeType & shape) { return shape.color(); });
 

@@ -47,7 +47,7 @@ void test_dynamic_correlator(int domain_id, int sample_count)
 
   auto subscription =
     topic_sub
-      .create_data_observable()
+      .create_observable()
       .op(rx4dds::group_by_dds_instance([](const ShapeType & shape) {
             return shape.color(); 
         }))
@@ -125,7 +125,7 @@ void test_keyed_topic(int domain_id, int sample_count)
               GroupedObservable;
 
   auto observable = 
-    topic_sub.create_data_observable()
+    topic_sub.create_observable()
              >> group_by_dds_instance(
                 [](const ShapeType & shape) { return shape.color(); });
 
@@ -180,7 +180,7 @@ void test_keyless_topic(int domain_id, int sample_count)
 
   rx4dds::TopicSubscription<ShapeType> topic_sub(participant, "Square", waitset, worker);
 
-  auto observable = topic_sub.create_data_observable()
+  auto observable = topic_sub.create_observable()
                       >> complete_on_dispose()
                       >> error_on_no_alive_writers()
                       >> skip_invalid_samples()
@@ -270,7 +270,51 @@ void test_original_subscriber(int domain_id, int sample_count)
     }
 }
 
-int main(int argc, char *argv[])
+void rx_demo1()
+{
+  rxcpp::observable<int> values1 =
+    rxcpp::observable<>::range(1, 5);
+
+  values1
+    .subscribe(
+      [](int v){ printf("OnNext: %d\n", v); },
+      [](){ printf("OnCompleted\n"); });
+}
+
+void rx_demo2()
+{
+  rxcpp::observable<int> values1 =
+    rxcpp::observable<>::range(1, 5);
+
+  values1
+    .map([](int v) { return 10 * v; })
+    .filter([](int v) { return (v % 15) != 0; })
+    .subscribe(
+      [](int v){ printf("OnNext: %d\n", v); },
+      [](){ printf("OnCompleted\n"); });
+}
+
+void rx_demo3()
+{
+  auto o1 = rxcpp::observable<>::interval(std::chrono::seconds(2));
+  auto o2 = rxcpp::observable<>::interval(std::chrono::seconds(3));
+
+  auto values = 
+    o1.map([](int i) { return 'A' + i; })
+      .combine_latest(o2);
+
+  values
+    .take(10)
+    .subscribe(
+       [](std::tuple<char, int> v) {
+         printf("OnNext: %c, %d\n", std::get<0>(v), std::get<1>(v)); 
+       },
+       []() { printf("OnCompleted\n"); });
+
+  //printf("Done.\n");
+}
+
+int main(int argc, char *argv [])
 {
     int domain_id = 0;
     int sample_count = 0;
@@ -299,6 +343,12 @@ int main(int argc, char *argv[])
         test_keyed_topic(domain_id, sample_count);
       else if (name == "keyless_topic")
         test_keyless_topic(domain_id, sample_count);
+      else if (name == "rx_demo1")
+        rx_demo1();
+      else if (name == "rx_demo2")
+        rx_demo2();
+      else if (name == "rx_demo3")
+        rx_demo3();
       else
         test_original_subscriber(domain_id, sample_count);
     } 

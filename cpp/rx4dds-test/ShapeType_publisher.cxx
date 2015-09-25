@@ -64,7 +64,6 @@ namespace std
 
 } // namespace std
 
-
 void publisher_main(int domain_id, int sample_count)
 {
     std::unordered_map<dds::core::string, int> m;
@@ -76,8 +75,10 @@ void publisher_main(int domain_id, int sample_count)
     // Create a Topic -- and automatically register the type
     dds::topic::Topic<ShapeTypeExtended> topic (participant, "Square");
 
+    dds::pub::Publisher publisher(participant);
+
     // Create a DataWriter with default Qos (Publisher created in-line)
-    dds::pub::DataWriter<ShapeTypeExtended> writer(dds::pub::Publisher(participant), topic);
+    dds::pub::DataWriter<ShapeTypeExtended> writer(publisher, topic);
 
     ShapeTypeExtended sample("BLUE", 10, 20, 30, ShapeFillKind::SOLID_FILL, 0.0f);
     for (int count = 0; count < sample_count || sample_count == 0; count++) {
@@ -89,6 +90,12 @@ void publisher_main(int domain_id, int sample_count)
 
         rti::util::sleep(dds::core::Duration(4));
     }
+
+    // The following weird RHS works because the functions data_on_readers
+    // and such functions in StatusMask are static and don't care about
+    // const StatusMask. Sigh!
+    dds::core::status::StatusMask sm = 
+      dds::core::status::StatusMask::data_on_readers().datawriter_cache();
 }
 
 int main(int argc, char *argv[])

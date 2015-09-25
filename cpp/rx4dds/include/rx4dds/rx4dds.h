@@ -71,42 +71,42 @@ namespace rx4dds {
     };
 
     template <typename R, typename C, typename A>
-    struct function_traits<R(C::*)(A)>
+    struct function_traits < R(C::*)(A) >
     {
       typedef R result_type;
       typedef A argument_type;
     };
 
     template <typename R, typename C, typename A>
-    struct function_traits<R(C::*)(A) const>
+    struct function_traits < R(C::*)(A) const >
     {
       typedef R result_type;
       typedef A argument_type;
     };
 
     template <typename R, typename A>
-    struct function_traits<R(*)(A)>
+    struct function_traits < R(*)(A) >
     {
       typedef R result_type;
       typedef A argument_type;
     };
 
     template <typename R, typename C, typename A1, typename A2>
-    struct function_traits<R(C::*)(A1, A2)>
+    struct function_traits < R(C::*)(A1, A2) >
     {
       typedef R result_type;
       typedef void argument_type;
     };
 
     template <typename R, typename C, typename A1, typename A2>
-    struct function_traits<R(C::*)(A1, A2) const>
+    struct function_traits < R(C::*)(A1, A2) const >
     {
       typedef R result_type;
       typedef void argument_type;
     };
 
     template <typename R, typename A1, typename A2>
-    struct function_traits<R(*)(A1, A2)>
+    struct function_traits < R(*)(A1, A2) >
     {
       typedef R result_type;
       typedef void argument_type;
@@ -116,9 +116,9 @@ namespace rx4dds {
     struct argument_type
     {
       typedef
-        typename std::remove_const<
-        typename std::remove_reference<
-        typename detail::function_traits<KeySelector>::argument_type>::type>::type
+        typename std::remove_const <
+        typename std::remove_reference <
+        typename detail::function_traits<KeySelector>::argument_type > ::type > ::type
         type;
     };
 
@@ -126,10 +126,82 @@ namespace rx4dds {
     struct result_type
     {
       typedef
-        typename std::remove_const<
-        typename std::remove_reference<
-        typename detail::function_traits<KeySelector>::result_type>::type>::type
+        typename std::remove_const <
+        typename std::remove_reference <
+        typename detail::function_traits<KeySelector>::result_type > ::type > ::type
         type;
+    };
+
+  } // namespace detail
+
+  struct StatusSet
+  {
+    dds::core::status::StatusMask                     status_mask;
+    dds::core::status::LivelinessChangedStatus        liveliness_changed_status;
+    dds::core::status::SampleRejectedStatus           sample_rejected_status;
+    dds::core::status::SampleLostStatus               sample_lost_status;
+    dds::core::status::RequestedDeadlineMissedStatus  requested_deadline_missed_status;
+    dds::core::status::RequestedIncompatibleQosStatus requested_incompatible_qos_status;
+    dds::core::status::SubscriptionMatchedStatus      subscription_matched_status;
+    rti::core::status::DataReaderCacheStatus          datareader_cache_status;
+    rti::core::status::DataReaderProtocolStatus       datareader_protocol_status;
+  };
+
+  namespace detail {
+
+    template <class T>
+    struct SubscriptionState
+    {
+      bool init_dr_done_;
+      bool init_read_condition_done_;
+      bool init_status_condition_done_;
+
+      dds::domain::DomainParticipant participant_;
+      std::string topic_name_;
+      dds::topic::Topic<T> topic_;
+      dds::sub::DataReader<T> reader_;
+      dds::core::cond::WaitSet wait_set_;
+      dds::sub::cond::ReadCondition read_condition_;
+      dds::core::cond::StatusCondition status_condition_;
+      rxcpp::schedulers::worker worker_;
+      rxcpp::subjects::subject<rti::sub::LoanedSample<T>> data_subject_;
+      rxcpp::subjects::subject<rx4dds::StatusSet> status_subject_;
+
+      SubscriptionState(dds::domain::DomainParticipant part,
+                        const std::string & topic_name,
+                        dds::core::cond::WaitSet wait_set,
+                        rxcpp::schedulers::worker worker)
+        : init_dr_done_(false),
+          init_read_condition_done_(false),
+          init_status_condition_done_(false),
+          participant_(part),
+          topic_name_(topic_name),
+          topic_(dds::core::null),
+          reader_(dds::core::null),
+          wait_set_(wait_set),
+          read_condition_(dds::core::null),
+          status_condition_(dds::core::null),
+          worker_(worker)
+      { }
+
+      ~SubscriptionState()
+      {
+        if (init_read_condition_done_)
+          wait_set_ -= read_condition_;
+
+        if (init_status_condition_done_)
+          wait_set_ -= status_condition_;
+      }
+
+      void initialize()
+      {
+        if (!init_dr_done_)
+        {
+          topic_ = dds::topic::Topic<T>(participant_, topic_name_);
+          reader_ = dds::sub::DataReader<T>(dds::sub::Subscriber(participant_), topic_);
+          init_dr_done_ = true;
+        }
+      }
     };
 
   } // namespace detail
@@ -145,94 +217,23 @@ namespace rx4dds {
         { }
     };
 
-    struct StatusSet
-    {
-      dds::core::status::StatusMask                     status_mask;
-      dds::core::status::LivelinessChangedStatus        liveliness_changed_status;
-      dds::core::status::SampleRejectedStatus           sample_rejected_status;
-      dds::core::status::SampleLostStatus               sample_lost_status;
-      dds::core::status::RequestedDeadlineMissedStatus  requested_deadline_missed_status;
-      dds::core::status::RequestedIncompatibleQosStatus requested_incompatible_qos_status;
-      dds::core::status::SubscriptionMatchedStatus      subscription_matched_status;
-      rti::core::status::DataReaderCacheStatus          datareader_cache_status;
-      rti::core::status::DataReaderProtocolStatus       datareader_protocol_status;
-    };
-
     template <class T>
     class TopicSubscription
     {
-    private:
-      struct SubscriptionState
-      {
-        bool init_dr_done_;
-        bool init_read_condition_done_;
-        bool init_status_condition_done_;
+    protected:
 
-        dds::domain::DomainParticipant participant_;
-        std::string topic_name_;
-        dds::topic::Topic<T> topic_;
-        dds::sub::DataReader<T> reader_;
-        dds::core::cond::WaitSet wait_set_;
-        dds::sub::cond::ReadCondition read_condition_;
-        dds::core::cond::StatusCondition status_condition_;
-        rxcpp::schedulers::worker worker_;
-        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> data_subject_;
-        rxcpp::subjects::subject<StatusSet> status_subject_;
-
-        SubscriptionState(dds::domain::DomainParticipant part,
-                          const std::string & topic_name,
-                          dds::core::cond::WaitSet wait_set,
-                          rxcpp::schedulers::worker worker)
-          : init_dr_done_(false),
-            init_read_condition_done_(false),
-            init_status_condition_done_(false),
-            participant_(part),
-            topic_name_(topic_name),
-            topic_(dds::core::null),
-            reader_(dds::core::null),
-            wait_set_(wait_set),
-            read_condition_(dds::core::null),
-            status_condition_(dds::core::null),
-            worker_(worker)
-        { }
-
-        ~SubscriptionState()
-        {
-          if (init_read_condition_done_)
-            wait_set_ -= read_condition_;
-
-          if (init_status_condition_done_)
-            wait_set_ -= status_condition_;
-        }
-      };
-
-      std::shared_ptr<SubscriptionState> state_;
-
-      void initialize_datareader()
-      {
-        if (!state_->init_dr_done_)
-        {
-          state_->topic_ =
-            dds::topic::Topic<T>(state_->participant_, state_->topic_name_);
-
-          state_->reader_ = dds::sub::DataReader<T>(
-            dds::sub::Subscriber(state_->participant_),
-            state_->topic_);
-
-          state_->init_dr_done_ = true;
-        }
-      }
+      std::shared_ptr<detail::SubscriptionState<T>> state_;
 
       void initialize_read_condition()
       {
         if (!state_->init_read_condition_done_)
         {
-          this->initialize_datareader();
+          state_->initialize();
 
           typename rxcpp::subjects::subject<rti::sub::LoanedSample<T>>::subscriber_type subscriber =
             state_->data_subject_.get_subscriber();
 
-          std::shared_ptr<SubscriptionState> state = state_;
+          std::shared_ptr<detail::SubscriptionState<T>> state = state_;
 
           state_->read_condition_ =
             dds::sub::cond::ReadCondition(
@@ -256,21 +257,21 @@ namespace rx4dds {
             }
           });
 
-          state_->wait_set_ += state->read_condition_;
+          state_->wait_set_ += state_->read_condition_;
           state_->init_read_condition_done_ = true;
         }
       }
 
       void initialize_status_condition()
       {
-        if (!state_->init_read_condition_done_)
+        if (!state_->init_status_condition_done_)
         {
-          this->initialize_datareader();
+          state_->initialize();
 
           typename rxcpp::subjects::subject<StatusSet>::subscriber_type subscriber =
             state_->data_subject_.get_subscriber();
 
-          std::shared_ptr<SubscriptionState> state = state_;
+          std::shared_ptr<SubscriptionState<T>> state = state_;
 
           state_->status_condition_ = dds::core::cond::StatusCondition(state_->reader_);
           state_->status_condition_.enabled_statuses(dds::core::status::StatusMask::all());
@@ -282,21 +283,21 @@ namespace rx4dds {
 
     public:
       TopicSubscription(dds::domain::DomainParticipant part,
-                          const std::string & topic_name,
-                          dds::core::cond::WaitSet wait_set,
-                          rxcpp::schedulers::worker worker)
-        : state_(std::make_shared<SubscriptionState>(
+                        const std::string & topic_name,
+                        dds::core::cond::WaitSet wait_set,
+                        rxcpp::schedulers::worker worker)
+        : state_(std::make_shared<detail::SubscriptionState<T>>(
                  part, topic_name, wait_set, worker))
       { }
 
-      rxcpp::observable<rti::sub::LoanedSample<T>> create_data_observable()
+      rxcpp::observable<rti::sub::LoanedSample<T>> create_observable()
       {
         TopicSubscription<T> topic_sub = *this;
 
         return rxcpp::observable<>::create<rti::sub::LoanedSample<T>>(
           [topic_sub](rxcpp::subscriber<rti::sub::LoanedSample<T>> subscriber)
         {
-          const_cast<TopicSubscription<T> &>(topic_sub).initialize_read_condition();
+          detail::remove_const(topic_sub).initialize_read_condition();
           rxcpp::composite_subscription subscription =
             topic_sub.state_->data_subject_.get_observable().subscribe(subscriber);
           return subscription;
@@ -310,7 +311,7 @@ namespace rx4dds {
         return rxcpp::observable<>::create<StatusSet>(
           [topic_sub](rxcpp::subscriber<StatusSet> subscriber)
         {
-          const_cast<TopicSubscription<T> &>(topic_sub).initialize_status_condition();
+          detail::remove_const(topic_sub).initialize_status_condition();
           rxcpp::composite_subscription subscription =
             topic_sub.state_->status_subject_.get_observable().subscribe(subscriber);
           return subscription;
@@ -322,6 +323,210 @@ namespace rx4dds {
         state_.reset();
       }
     };
+
+    template <class Key, class T, class KeySelector>
+    class KeyedTopicSubscription : public TopicSubscription<T>
+    {
+      typedef rxcpp::grouped_observable<Key, rti::sub::LoanedSample<T>> GroupedObservable;
+
+      class Bucket
+      {
+        std::vector<rti::sub::LoanedSample<T>> snapshot_batch_;
+        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
+        rxcpp::composite_subscription subscription_;
+
+      public:
+
+        Bucket() {}
+
+        Bucket(Key key,
+               rxcpp::subjects::subject<GroupedObservable> shared_topsubject)
+        {
+          subscription_ =
+            subject_
+            .get_observable()
+            .group_by([key](rti::sub::LoanedSample<T> sample) {
+            return key;
+          },
+            [](rti::sub::LoanedSample<T> sample) {
+            return sample;
+          })
+            .map([shared_topsubject](GroupedObservable go) {
+            remove_const(shared_topsubject).get_subscriber().on_next(go);
+            return 0;
+          })
+            .subscribe();
+        }
+
+        rxcpp::subjects::subject<rti::sub::LoanedSample<T>> & get_subject()
+        {
+          return subject_;
+        }
+
+        void add(rti::sub::LoanedSample<T> sample)
+        {
+          snapshot_.push_back(sample);
+        }
+
+        size_t snapshot_size() const
+        {
+          return snapshot_batch_.size();
+        }
+
+        void clear_snapshot()
+        {
+          snapshot_batch_.clear();
+        }
+
+        void push_to_observers(dds::core::InstanceHandle & handle,
+                               std::vector<dds::core::InstanceHandle> & disposed_handles)
+        {
+          for (int i = 0; i < snapshot_batch_.size(); ++i)
+          {
+              dds::sub::status::InstanceState istate;
+              snapshot_batch_[i].info().state() >> istate;
+
+              if (istate == dds::sub::status::InstanceState::not_alive_disposed())
+              {
+                if (i == (snapshot_batch_.size() - 1))
+                {
+                  subject_.get_subscriber().on_completed();
+                  disposed_handles.push_back(handle);
+                }
+                else
+                {
+                  std::cout << "Gotcha! Disposed instance state but not the last sample in the snapshot batch!\n";
+                }
+              }
+              else
+              {
+                subject_.get_subscriber().on_next(sample);
+              }
+          }
+        }
+      };
+
+      typedef std::unordered_map<dds::core::InstanceHandle, Bucket> BucketMap;
+
+      struct GroupByState
+      {
+        KeySelector key_selector_;
+        BucketMap buckets_;
+        rxcpp::subjects::subject<GroupedObservable> shared_topsubject_;
+        std::vector<dds::core::InstanceHandle> disposed_handles_;
+
+        explicit GroupByState(KeySelector&& key_selector)
+          : key_selector_(std::move(key_selector))
+        {}
+      };
+
+      protected:
+
+      std::shared_ptr<detail::SubscriptionState<T>> subscription_state_;
+      std::shared_ptr<GroupByState> groupby_state_;
+
+      void initialize_read_condition()
+      {
+        if (!subscription_state_->init_read_condition_done_)
+        {
+          subscription_state_->initialize();
+
+          typename rxcpp::subjects::subject<GroupedObservable>::subscriber_type subscriber =
+            groupby_state_->data_subject_.get_subscriber();
+
+          std::shared_ptr<detail::SubscriptionState<T>> subscription_state = subscription_state_;
+          std::shared_ptr<detail::GroupByState> groupby_state = groupby_state_;
+
+          state_->read_condition_ =
+            dds::sub::cond::ReadCondition(
+            state_->reader_,
+            dds::sub::status::DataState::any(),
+            [subscription_state, groupby_state, subscriber]()
+          {
+            try {
+              dds::sub::LoanedSamples<T> samples =
+                subscription_state->reader_.take();
+
+              for (auto sample : samples)
+              {
+                dds::core::InstanceHandle handle = sample.info().instance_handle();
+                BucketMap::const_iterator got = groupby_state->buckets_.find(handle);
+
+                if (got == groupby_state->buckets_.end()) // new instance
+                {
+                  if (sample.info().valid())
+                  {
+                    groupby_state->buckets_.emplace(
+                      std::make_pair(handle,
+                                     Bucket(groupby_state->key_selector_(sample.data()),
+                                            groupby_state->shared_topsubject_)));
+                  }
+                  else
+                  {
+                    // Ignoring invalid sample of unknown instance.
+                  }
+                }
+                groupby_state->buckets_[handle].add(sample);
+              }
+
+              disposed_handles_.clear();
+
+              std::for_each(groupby_state->buckets_.begin(),
+                            groupby_state->buckets_.end(),
+                            [groupby_state](BucketMap::value_type & kv) {
+                                kv.second.push_to_observers(kv.first, groupby_state->disposed_handles_);
+                                kv.clear_snapshot();
+                            });
+
+              std::for_each(groupby_state->disposed_handles_.begin(),
+                            groupby_state->disposed_handles_.end()
+                            [groupby_state](dds::core::InstanceHandle & handle) {
+                              groupby_state->buckets_.erase(handle);
+                            });
+            }
+            catch (...)
+            {
+              subscriber.on_error(std::current_exception());
+              groupby_state->data_subject_ = rxcpp::subjects::subject<rti::sub::LoanedSample<T>>();
+            }
+          });
+
+          state_->wait_set_ += state_->read_condition_;
+          state_->init_read_condition_done_ = true;
+        }
+      }
+
+    public:
+      KeyedTopicSubscription(dds::domain::DomainParticipant part,
+                             const std::string & topic_name,
+                             dds::core::cond::WaitSet wait_set,
+                             rxcpp::schedulers::worker worker,
+                             KeySelector key_selector)
+        : TopicSubscription<T>(part, topic_name, wait_set, worker),
+          groupby_state_(std::make_shared<GroupByState>(std::move(key_selector)))
+      { }
+
+      rxcpp::observable<rti::sub::LoanedSample<T>> create_observable()
+      {
+        KeyedTopicSubscription keyed_topic_sub = *this;
+
+        return rxcpp::observable<>::create<rti::sub::LoanedSample<T>>(
+          [keyed_topic_sub](rxcpp::subscriber<rti::sub::LoanedSample<T>> subscriber)
+        {
+          detail::remove_const(keyed_topic_sub).initialize_read_condition();
+          rxcpp::composite_subscription subscription =
+            keyed_topic_sub.state_->data_subject_.get_observable().subscribe(subscriber);
+          return subscription;
+        });
+      }
+
+      void reset()
+      {
+        state_.reset();
+        groupby_state_.reset();
+      }
+    };
+
 
     namespace detail {
 
@@ -344,7 +549,6 @@ namespace rx4dds {
 
         class Bucket
         {
-          std::vector<rti::sub::LoanedSample<T>> snapshot_batch_;
           rxcpp::subjects::subject<rti::sub::LoanedSample<T>> subject_;
           rxcpp::composite_subscription subscription_;
 
@@ -374,21 +578,6 @@ namespace rx4dds {
           rxcpp::subjects::subject<rti::sub::LoanedSample<T>> & get_subject()
           {
             return subject_;
-          }
-
-          void add(rti::sub::LoanedSample<T> sample)
-          {
-            snapshot_.push_back(sample);
-          }
-
-          size_t snapshot_size() const
-          {
-            return snapshot_batch_.size();
-          }
-
-          void clear_snapshot()
-          {
-            snapshot_batch_.clear();
           }
         };
 
@@ -558,7 +747,7 @@ namespace rx4dds {
           return prev.filter([](LoanedSample sample) {
             return sample.info().valid();
           });
-        };
+        }
       };
 
       class MapSampleToDataOp
@@ -679,7 +868,7 @@ namespace rx4dds {
       PublishOverDDSOp(dds::pub::DataWriter<T> datawriter,
         const T & instance)
         : data_writer_(datawriter),
-        dispose_instance_(instance)
+          dispose_instance_(instance)
       { }
 
       rxcpp::observable<T> operator ()(rxcpp::observable<T> prev) const
@@ -689,12 +878,15 @@ namespace rx4dds {
 
         return prev.tap(
           [data_writer](T & t) {
-          const_cast<dds::pub::DataWriter<T> &>(data_writer).write(t);
-        },
-          [](std::exception_ptr eptr) { /* no-op */ },
+            remove_const(data_writer).write(t);
+          },
+          [data_writer, instance](std::exception_ptr eptr) { 
+            dds::pub::DataWriter<T> & dw = remove_const(data_writer);
+            dw.dispose_instance(dw.register_instance(instance));
+          },
           [data_writer, instance]() {
-          dds::pub::DataWriter<T> & dw = const_cast<dds::pub::DataWriter<T> &>(data_writer);
-          dw.dispose_instance(dw.register_instance(instance));
+            dds::pub::DataWriter<T> & dw = remove_const(data_writer);
+            dw.dispose_instance(dw.register_instance(instance));
         });
       }
     };
