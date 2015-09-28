@@ -8,10 +8,10 @@ Rx4DDS is a research library that integrates Reactive Extensions (Rx) with RTI C
 ###Status
 The Rx4DDS adapters are research prototypes. RxJS adapter works with [RTI Connext DDS Node.js Connector](https://github.com/rticommunity/rticonnextdds-connector). The C# codebase also includes an implementation of the [DEBS'13 Grand Challenge](http://www.orgs.ttu.edu/debs2013/index.php?goto=cfchallengedetails) using DDS and Rx.NET.
 
-###More Reading
+###Resources
+- Rx4DDS [Main Page](http://rticommunity.github.io/rticonnextdds-reactive/)
+- CppCon2015 presentation [Reactive Stream Processing in Industrial IoT using DDS and RxCpp](http://www.slideshare.net/SumantTambe/reactive-stream-processing-in-industrial-iot-using-dds-and-rx), [demos](http://rticommunity.github.io/rticonnextdds-reactive/), and [video](https://www.youtube.com/channel/UCMlGfpWw-RUdWX_JbLCukXg)
+- DEBS'2015 research paper (newer) [Functional Reactive Stream Processing for Data-centric Publish/Subscribe](https://community.rti.com/paper/reactive-stream-processing-data-centric-publishsubscribe)
+- Research paper (older) [Scalable Reactive Stream Processing Using DDS and Rx](http://community.rti.com/paper/scalable-reactive-stream-processing-using-dds-and-rx) 
 - Rx4DDS.NET [Announcement](http://blogs.rti.com/2014/04/09/reactive-programming-using-rx4dds/)
-- Research paper (newer) [Functional Reactive Stream Processing for Data-centric Publish/Subscribe](https://community.rti.com/paper/reactive-stream-processing-data-centric-publishsubscribe)
-- Research paper (original) [Scalable Reactive Stream Processing Using DDS and Rx](http://community.rti.com/paper/scalable-reactive-stream-processing-using-dds-and-rx) 
-- Reactive Stream Processing using DDS and Rx [presentation](http://www.slideshare.net/SumantTambe/reactive-stream-processing-using-dds-and-rx)
-- 2014 Silicon Valley Code Camp [video](https://vimeo.com/108753792)
 
