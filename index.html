@@ -64,11 +64,11 @@
 </ul>
 
 <h3>
-<a id="blue-shapes-solar-system-demo" class="anchor" href="#blue-shapes-solar-system-demo" aria-hidden="true"><span class="octicon octicon-link"></span></a>Blue Shapes Solar-System Demo</h3>
+<a id="data-transformation-using-map" class="anchor" href="#data-transformation-using-map" aria-hidden="true"><span class="octicon octicon-link"></span></a>Data Transformation using Map</h3>
 
-<p>Transformation of the "Square" topic to "Circle" and "Triangle" topics orbiting around the Square Sun.</p>
+<p>Demonstrates a stateful transformation pipeline. Transforms "Square" topic to "Circle" and "Triangle" topics. Blue circle orbits around the square, and blue triangle orbits around the blue circle. </p>
 
-<p><iframe width="420" height="315" src="https://www.youtube.com/embed/mHNyEPeOPHg" frameborder="0" allowfullscreen></iframe></p>
+<p><img src="https://www.youtube.com/embed/mHNyEPeOPHg" alt="Blue Shapes Solar-System"></p>
 
 <div class="highlight highlight-source-c++"><pre>  rx4dds::TopicSubscription&lt;ShapeType&gt; 
       <span class="pl-en">topic_sub</span>(participant, <span class="pl-s"><span class="pl-pds">"</span>Square<span class="pl-pds">"</span></span>, waitset, worker);
@@ -104,14 +104,14 @@
     })
     &gt;&gt; <span class="pl-en">rx4dds::publish_over_dds</span>(triangle_writer);
 
-  <span class="pl-k">return</span> triangle_track.subscribe();</pre></div>
+  triangle_track.subscribe();</pre></div>
 
 <h3>
-<a id="keyed-shapes-solar-systems-parallel-data-pipelines" class="anchor" href="#keyed-shapes-solar-systems-parallel-data-pipelines" aria-hidden="true"><span class="octicon octicon-link"></span></a>Keyed Shapes Solar-Systems (Parallel Data Pipelines)</h3>
+<a id="keyed-data-transformation-using-groupby-and-map" class="anchor" href="#keyed-data-transformation-using-groupby-and-map" aria-hidden="true"><span class="octicon octicon-link"></span></a>Keyed Data Transformation using GroupBy and Map</h3>
 
-<p>Parallel stateful data pipelines keyed by shape color. </p>
+<p>Demonstrates multiple parallel stateful pipelines. Same as before but the transformation pipeline is replicated for each key (i.e., shape color). The resulting topics ("Circle" and "Triangle") mimic the lifecycle of the original instance in "Square" topic. DDS dispose maps to on_completed and NOT_ALIVE_NO_WRITERS instance-state maps to on_error.</p>
 
-<p><iframe width="420" height="315" src="https://www.youtube.com/embed/2Pz91e7yR5I" frameborder="0" allowfullscreen></iframe></p>
+<p><img src="https://www.youtube.com/embed/2Pz91e7yR5I" alt="Parallel Keyed Shapes Solar-Systems"></p>
 
 <div class="highlight highlight-source-c++"><pre>rx4dds::TopicSubscription&lt;ShapeType&gt; 
     <span class="pl-en">topic_sub</span>(participant, <span class="pl-s"><span class="pl-pds">"</span>Square<span class="pl-pds">"</span></span>, waitset, worker);
@@ -139,11 +139,11 @@ grouped_stream
   }).subscribe();</pre></div>
 
 <h3>
-<a id="average-of-multiple-square-instances" class="anchor" href="#average-of-multiple-square-instances" aria-hidden="true"><span class="octicon octicon-link"></span></a>Average of Multiple Square Instances</h3>
+<a id="average-of-multiple-topic-instances" class="anchor" href="#average-of-multiple-topic-instances" aria-hidden="true"><span class="octicon octicon-link"></span></a>Average of Multiple Topic Instances</h3>
 
-<p>Dynamic correlation (average) of multiple Square instances. </p>
+<p>Demonstrates dynamic correlation (average) of "Square" topic instances. Incorporates lifecycle (appearance and disappearance) of "Square" topic instances. As before, DDS dispose maps to on_completed and NOT_ALIVE_NO_WRITERS instance-state maps to on_error.</p>
 
-<p><iframe width="420" height="315" src="https://www.youtube.com/embed/tZutExU6r0w" frameborder="0" allowfullscreen></iframe></p>
+<p><img src="https://www.youtube.com/embed/tZutExU6r0w" alt="Average of Multiple Square Instances"></p>
 
 <div class="highlight highlight-source-c++"><pre>rx4dds::TopicSubscription&lt;ShapeType&gt; 
     <span class="pl-en">topic_sub</span>(participant, <span class="pl-s"><span class="pl-pds">"</span>Square<span class="pl-pds">"</span></span>, waitset, worker);
@@ -158,7 +158,10 @@ grouped_stream
               &gt;&gt; <span class="pl-c1">rx4dds::complete_on_dispose</span>()
               &gt;&gt; <span class="pl-c1">rx4dds::error_on_no_alive_writers</span>()
               &gt;&gt; <span class="pl-c1">rx4dds::skip_invalid_samples</span>()
-              &gt;&gt; <span class="pl-c1">rx4dds::map_samples_to_data</span>();
+              &gt;&gt; <span class="pl-c1">rx4dds::map_samples_to_data</span>()
+              &gt;&gt; <span class="pl-c1">publish</span>()
+              &gt;&gt; <span class="pl-c1">ref_count</span>()
+              &gt;&gt; <span class="pl-c1">as_dynamic</span>();
  })
  &gt;&gt; <span class="pl-en">rx4dds::coalesce_alive</span>()
  &gt;&gt; rxcpp::map([](<span class="pl-k">const</span> vector&lt;rxcpp::observable&lt;ShapeType&gt;&gt; &amp; srcs) {
